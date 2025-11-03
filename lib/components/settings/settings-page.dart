@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lib_boloto_launcher/helpers/shared_preferences.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lib_boloto_launcher/theme/boloto_theme.dart';
 
@@ -21,12 +22,12 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _loadSavedPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    _pathController.text = prefs.getString('installation_path') ?? '';
+    _pathController.text = prefs.getString(PrefKeys.packPath) ?? '';
   }
 
   Future<void> _savePrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('installation_path', _pathController.text);
+    await prefs.setString(PrefKeys.packPath, _pathController.text);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text(

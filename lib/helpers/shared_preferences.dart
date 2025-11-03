@@ -1,8 +1,8 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 class PrefKeys {
-  static const username = 'username';
-  static const email = 'email';
+  static const packPath = 'packPath';
+  static const hoursPlayed = 'hoursPlayed';
 }
 
 class SharedPreferencesHelper {
