@@ -3,6 +3,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 class PrefKeys {
   static const packPath = 'packPath';
   static const hoursPlayed = 'hoursPlayed';
+  static const accessKeys = 'accessKeys';
+  static const enabledModpacks = 'enabledModpacks';
 }
 
 class SharedPreferencesHelper {
