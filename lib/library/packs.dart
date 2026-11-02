@@ -134,19 +134,6 @@ String _codeFrom(String slug) {
   return letters.length <= 3 ? letters : letters.substring(0, 3);
 }
 
-/// The empty slot at the end of the rack.
-const blankPack = Pack(
-  id: 'blank',
-  code: 'NO-SIG',
-  title: 'BLANK',
-  short: 'BLANK',
-  mark: PackMark.none,
-  color: Color(0xFF16211A),
-  ink: Color(0xFF8FB59A),
-  status: 'NEXT TRANSMISSION PENDING',
-  disabled: true,
-);
-
 /// Used to preview the media style in settings.
 const samplePack = Pack(
   id: 'sample',

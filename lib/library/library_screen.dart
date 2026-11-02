@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../api/launcher_api.dart';
 import '../app/settings.dart';
 import '../ui/crt.dart';
-import '../ui/dialog.dart';
 import '../ui/icons.dart';
 import '../ui/layout.dart';
 import '../ui/media.dart';
@@ -38,41 +36,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
               dir: 'DIR: /usr/local/boloto/library',
               note: 'Tapes are pulled from the Boloto CDN, so mods that live nowhere else ship with the pack.',
               children: [
-                for (final (i, p) in [...c.packs, blankPack].indexed)
-                  _TapeTile(pack: p, index: i, controller: c, media: media),
-                if (c.rackState == RackState.loading && c.packs.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Text('> FETCHING RACK FROM boloto.studio…', style: mono(11, color: context.pal.dim)),
-                  ),
-                if (c.rackState == RackState.error)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Text('> RACK OFFLINE: ${c.rackError}', style: mono(11, color: context.pal.dim)),
-                  ),
-                Reveal.fade(
-                  d: 1.6,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TermButton(
-                          label: 'Redeem key',
-                          icon: TermIcon.user,
-                          fontSize: 11,
-                          onTap: () => showRedeemDialog(context, c),
-                          semanticLabel: 'Redeem a game key',
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      TermButton(
-                        label: 'Rescan',
-                        fontSize: 11,
-                        onTap: c.rackState == RackState.loading ? null : c.refresh,
-                        semanticLabel: 'Reload the rack',
-                      ),
-                    ],
-                  ),
-                ),
+                for (final (i, p) in c.packs.indexed) _TapeTile(pack: p, index: i, controller: c, media: media),
+                if (c.packs.isEmpty) _RackMessage(controller: c),
               ],
             ),
             Expanded(
@@ -500,72 +465,35 @@ class _BuildPicker extends StatelessWidget {
   }
 }
 
-/// Asks for a game key and redeems it. The unlocked pack lands in the deck.
-Future<void> showRedeemDialog(BuildContext context, LibraryController controller) =>
-    showTermDialog<void>(context, _RedeemDialog(controller: controller));
-
-class _RedeemDialog extends StatefulWidget {
-  const _RedeemDialog({required this.controller});
+/// What the rack shows instead of tapes: fetching, offline, or empty.
+class _RackMessage extends StatelessWidget {
+  const _RackMessage({required this.controller});
   final LibraryController controller;
 
   @override
-  State<_RedeemDialog> createState() => _RedeemDialogState();
-}
-
-class _RedeemDialogState extends State<_RedeemDialog> {
-  final _code = TextEditingController();
-  bool _busy = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _code.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (_busy) return;
-    if (_code.text.trim().isEmpty) {
-      setState(() => _error = 'Enter a key.');
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      await widget.controller.redeem(_code.text);
-      if (mounted) Navigator.of(context).pop();
-    } on ApiException catch (e) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = e.message;
-        });
-      }
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return TermDialog(
-      title: 'REDEEM KEY',
-      blurb: 'A key unlocks a pack, or a dev build of one. Sign in first to keep it on your account.',
-      actions: [
-        TermButton(label: 'Cancel', onTap: _busy ? null : () => Navigator.of(context).pop()),
-        TermButton(label: 'Redeem', icon: TermIcon.play, onTap: _busy ? null : _submit),
-      ],
-      children: [
-        TermField(
-          controller: _code,
-          autofocus: true,
-          enabled: !_busy,
-          hint: 'XXXXX-XXXXX-XXXXX-XXXXX',
-          onSubmitted: (_) => _submit(),
+    final pal = context.pal;
+    final (title, body) = switch (controller.rackState) {
+      RackState.loading => ('SCANNING…', 'Fetching tapes from boloto.studio.'),
+      RackState.error => ('NO SIGNAL', '${controller.rackError} Rescan from Settings › Keys.'),
+      RackState.ready => ('RACK EMPTY', 'No tapes on the rack yet. Stay tuned, new modpacks are on the way.'),
+    };
+    return Reveal.fade(
+      d: 1.2,
+      child: CustomPaint(
+        foregroundPainter: DashedBorderPainter(color: pal.rule),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 22),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: vt(30, height: 1)),
+              const SizedBox(height: 8),
+              Text(body, style: mono(12, height: 1.55, color: pal.dim)),
+            ],
+          ),
         ),
-        const SizedBox(height: 10),
-        FormStatus(busy: _busy, busyText: '> CONTACTING boloto.studio…', error: _error),
-      ],
+      ),
     );
   }
 }

@@ -25,7 +25,8 @@ point it at a local Django server with:
 flutter run -d windows --dart-define=BOLOTO_API=http://127.0.0.1:8000
 ```
 
-Game keys are redeemed from **Redeem key** on the rack. The first redemption
+Game keys are redeemed in **Settings › 03 · Keys**, which also lists what this
+launcher has unlocked and has **Rescan** to reload the rack. The first redemption
 registers this install with the server and stores its token in shared
 preferences (`launcher.token`), so unlocked packs and builds show up on later
 launches.

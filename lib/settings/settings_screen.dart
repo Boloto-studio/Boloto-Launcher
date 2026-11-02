@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../api/launcher_api.dart';
 import '../app/settings.dart';
+import '../library/library_controller.dart';
 import '../library/packs.dart';
 import '../ui/crt.dart';
+import '../ui/dialog.dart';
+import '../ui/icons.dart';
 import '../ui/layout.dart';
 import '../ui/media.dart';
 import '../ui/motion.dart';
@@ -11,7 +15,8 @@ import '../ui/widgets.dart';
 
 enum _Section {
   display('01 · DISPLAY', 'PHOSPHOR · MEDIA · CRT', 'display.cfg'),
-  launcher('02 · LAUNCHER', 'INSTANCES · MEMORY · JAVA', 'launcher.cfg');
+  launcher('02 · LAUNCHER', 'INSTANCES · MEMORY · JAVA', 'launcher.cfg'),
+  keys('03 · KEYS', 'REDEEM · UNLOCKED · RESCAN', 'keys.cfg');
 
   const _Section(this.title, this.blurb, this.file);
   final String title;
@@ -20,7 +25,10 @@ enum _Section {
 }
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, required this.library});
+
+  /// The rack: keys unlock packs on it, and Rescan reloads it.
+  final LibraryController library;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -88,6 +96,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               child: switch (_section) {
                                 _Section.display => _DisplaySection(settings: settings),
                                 _Section.launcher => _LauncherSection(settings: settings),
+                                _Section.keys => _KeysSection(library: widget.library),
                               },
                             ),
                           ),
@@ -352,6 +361,151 @@ class _LauncherSectionState extends State<_LauncherSection> {
           child: const TagChip('AUTO-MANAGED'),
         ),
       ],
+    );
+  }
+}
+
+class _KeysSection extends StatefulWidget {
+  const _KeysSection({required this.library});
+  final LibraryController library;
+
+  @override
+  State<_KeysSection> createState() => _KeysSectionState();
+}
+
+class _KeysSectionState extends State<_KeysSection> {
+  final _code = TextEditingController();
+  bool _busy = false;
+  String? _error;
+  String? _done;
+
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  Future<void> _redeem() async {
+    if (_busy) return;
+    if (_code.text.trim().isEmpty) {
+      setState(() {
+        _error = 'Enter a key.';
+        _done = null;
+      });
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = _done = null;
+    });
+    try {
+      final result = await widget.library.redeem(_code.text);
+      if (!mounted) return;
+      final build = result.pack.buildFor(result.buildSlug);
+      final what = [result.pack.title, if (build != null && !build.isRelease) build.label].join(' / ');
+      setState(() {
+        _busy = false;
+        _code.clear();
+        _done = result.alreadyRedeemed
+            ? '$what is already unlocked.'
+            : '$what unlocked. It\'s in the deck on the Library tab.';
+      });
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = e.message;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.pal;
+    return ListenableBuilder(
+      listenable: widget.library,
+      builder: (context, _) {
+        final lib = widget.library;
+        final unlocked = [
+          for (final p in lib.packs)
+            for (final b in p.builds)
+              if (b.unlockedByKey) b.isRelease ? p.title : '${p.title} / ${b.label}',
+        ];
+        final rack = switch (lib.rackState) {
+          RackState.loading => '> SCANNING…',
+          RackState.error => '> NO SIGNAL: ${lib.rackError.toUpperCase()}',
+          RackState.ready => '> ${lib.packs.length} ON RACK',
+        };
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const _Heading('KEYS'),
+            _Row(
+              index: 0,
+              label: 'REDEEM KEY',
+              desc: 'A key unlocks a pack, or a dev build of one. Sign in first to keep it on your account.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TermField(
+                          controller: _code,
+                          enabled: !_busy,
+                          hint: 'XXXXX-XXXXX-XXXXX-XXXXX',
+                          fontSize: 13,
+                          onSubmitted: (_) => _redeem(),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      TermButton(label: 'Redeem', icon: TermIcon.play, onTap: _busy ? null : _redeem),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  if (_done != null)
+                    Text('> ${_done!.toUpperCase()}', style: mono(11, ls: .08, color: pal.ph))
+                  else
+                    FormStatus(busy: _busy, busyText: '> CONTACTING boloto.studio…', error: _error),
+                ],
+              ),
+            ),
+            _Row(
+              index: 1,
+              label: 'UNLOCKED',
+              desc: 'Packs and builds this launcher has unlocked with keys.',
+              child: unlocked.isEmpty
+                  ? Text('[NONE YET]', style: mono(13, ls: .06, color: pal.dim))
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final (i, u) in unlocked.indexed) ...[
+                          if (i > 0) const SizedBox(height: 8),
+                          Text('${(i + 1).toString().padLeft(2, '0')}  $u', style: mono(13, ls: .04)),
+                        ],
+                      ],
+                    ),
+            ),
+            _Row(
+              index: 2,
+              label: 'RACK',
+              desc: 'Reload the tape rack from boloto.studio, e.g. after a new pack is released.',
+              child: Row(
+                children: [
+                  TermButton(
+                    label: 'Rescan',
+                    onTap: lib.rackState == RackState.loading ? null : lib.refresh,
+                    semanticLabel: 'Reload the rack',
+                  ),
+                  const SizedBox(width: 16),
+                  Flexible(child: Text(rack, style: mono(11, ls: .08, color: pal.dim))),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
