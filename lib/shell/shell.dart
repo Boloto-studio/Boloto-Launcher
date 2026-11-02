@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../api/launcher_api.dart';
 import '../app/settings.dart';
 import '../library/library_controller.dart';
 import '../library/library_screen.dart';
@@ -31,7 +32,8 @@ const _logo = r''' ___  ___  _    ___ _____ ___
 
 /// App frame: header with nav, the active screen, footer, and the CRT overlay.
 class Shell extends StatefulWidget {
-  const Shell({super.key});
+  const Shell({super.key, required this.api});
+  final LauncherApi api;
 
   @override
   State<Shell> createState() => _ShellState();
@@ -39,12 +41,13 @@ class Shell extends StatefulWidget {
 
 class _ShellState extends State<Shell> {
   AppScreen _screen = AppScreen.library;
-  final _library = LibraryController();
+  late final _library = LibraryController(api: widget.api);
   late final Timer _introTimer;
 
   @override
   void initState() {
     super.initState();
+    _library.refresh();
     // Once the cold-start intro has played, later screens stagger in faster.
     _introTimer = Timer(const Duration(seconds: 3), () => Motion.delayScale = .3);
   }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../api/launcher_api.dart';
 import '../app/settings.dart';
 import '../ui/crt.dart';
 import '../ui/icons.dart';
@@ -20,8 +21,6 @@ class LibraryScreen extends StatefulWidget {
 }
 
 class _LibraryScreenState extends State<LibraryScreen> {
-  String _channel = '[LATEST]';
-
   @override
   Widget build(BuildContext context) {
     final media = SettingsScope.of(context).media;
@@ -34,11 +33,45 @@ class _LibraryScreenState extends State<LibraryScreen> {
           children: [
             SideRack(
               title: '/tapes',
-              meta: '${packs.length} ON RACK',
+              meta: c.rackState == RackState.loading && c.packs.isEmpty ? 'SCANNING…' : '${c.packs.length} ON RACK',
               dir: 'DIR: /usr/local/boloto/library',
               note: 'Tapes are pulled from the Boloto CDN, so mods that live nowhere else ship with the pack.',
               children: [
-                for (final (i, p) in packs.indexed) _TapeTile(pack: p, index: i, controller: c, media: media),
+                for (final (i, p) in [...c.packs, blankPack].indexed)
+                  _TapeTile(pack: p, index: i, controller: c, media: media),
+                if (c.rackState == RackState.loading && c.packs.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Text('> FETCHING RACK FROM boloto.studio…', style: mono(11, color: context.pal.dim)),
+                  ),
+                if (c.rackState == RackState.error)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Text('> RACK OFFLINE: ${c.rackError}', style: mono(11, color: context.pal.dim)),
+                  ),
+                Reveal.fade(
+                  d: 1.6,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TermButton(
+                          label: 'Redeem key',
+                          icon: TermIcon.user,
+                          fontSize: 11,
+                          onTap: () => showRedeemDialog(context, c),
+                          semanticLabel: 'Redeem a game key',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      TermButton(
+                        label: 'Rescan',
+                        fontSize: 11,
+                        onTap: c.rackState == RackState.loading ? null : c.refresh,
+                        semanticLabel: 'Reload the rack',
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
             Expanded(
@@ -68,12 +101,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       ),
                     ),
                     const SizedBox(height: 18),
-                    _Deck(
-                      controller: c,
-                      media: media,
-                      channel: _channel,
-                      onChannel: (v) => setState(() => _channel = v),
-                    ),
+                    _Deck(controller: c, media: media),
                   ],
                 ),
               ),
@@ -93,7 +121,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             delay: 1.3,
           ),
         DeckPhase.loading => _Console(lines: c.bootLines, size: 24, stepMs: 7),
-        DeckPhase.ready => _Ready(pack: c.pack!),
+        DeckPhase.ready => _Ready(pack: c.pack!, build: c.build),
         DeckPhase.installing => _Installing(controller: c),
         DeckPhase.running => _Console(lines: c.runLines, size: 22, stepMs: 9),
       };
@@ -185,8 +213,9 @@ class _Console extends StatelessWidget {
 }
 
 class _Ready extends StatelessWidget {
-  const _Ready({required this.pack});
+  const _Ready({required this.pack, required this.build});
   final Pack pack;
+  final PackBuild? build;
 
   @override
   Widget build(BuildContext context) {
@@ -229,7 +258,7 @@ class _Ready extends StatelessWidget {
         const SizedBox(height: 18),
         Table(
           children: [
-            TableRow(children: [_stat(pal, 'MINECRAFT', pack.mc), _stat(pal, 'LOADER', pack.loader)]),
+            TableRow(children: [_stat(pal, 'MINECRAFT', _mc), _stat(pal, 'LOADER', _loader)]),
             const TableRow(children: [SizedBox(height: 8), SizedBox(height: 8)]),
             TableRow(children: [_stat(pal, 'MODS', pack.mods), _stat(pal, 'DOWNLOAD', pack.size)]),
           ],
@@ -275,6 +304,14 @@ class _Ready extends StatelessWidget {
     );
   }
 
+  String get _mc => build == null || build!.minecraftVersion.isEmpty ? '[MC VERSION]' : build!.minecraftVersion;
+
+  String get _loader {
+    final b = build;
+    if (b == null || b.modLoader.isEmpty) return '[LOADER]';
+    return [b.modLoader.toUpperCase(), if (b.loaderVersion.isNotEmpty) b.loaderVersion].join(' ');
+  }
+
   Widget _stat(Palette pal, String k, String v) => Padding(
         padding: const EdgeInsets.only(right: 20),
         child: Column(
@@ -311,11 +348,9 @@ class _Installing extends StatelessWidget {
 
 /// `DECK A // TAPE TRANSPORT` — slot, LEDs and transport controls.
 class _Deck extends StatelessWidget {
-  const _Deck({required this.controller, required this.media, required this.channel, required this.onChannel});
+  const _Deck({required this.controller, required this.media});
   final LibraryController controller;
   final MediaKind media;
-  final String channel;
-  final ValueChanged<String> onChannel;
 
   @override
   Widget build(BuildContext context) {
@@ -390,7 +425,7 @@ class _Deck extends StatelessWidget {
         children: [
           const Caption('BUILD', ls: .12),
           const SizedBox(width: 12),
-          TermSelect(value: channel, options: const ['[LATEST]', '[PREVIOUS]'], onChanged: onChannel, label: 'Build'),
+          _BuildPicker(controller: c),
           const SizedBox(width: 12),
           TermButton(
             label: 'Eject',
@@ -429,6 +464,155 @@ class _Deck extends StatelessWidget {
             children: [top, const SizedBox(height: 16), controls],
           );
         },
+      ),
+    );
+  }
+}
+
+/// BUILD selector: the release and any dev/beta builds this launcher can see.
+class _BuildPicker extends StatelessWidget {
+  const _BuildPicker({required this.controller});
+  final LibraryController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = controller;
+    final pack = c.pack;
+    final current = c.build;
+    if (pack == null || current == null) {
+      return Opacity(opacity: .35, child: Text('[NO TAPE]', style: mono(13, ls: .06)));
+    }
+    if (!c.canSelectBuild) {
+      return Text('[${current.label}]', style: mono(13, ls: .06));
+    }
+    return TermSelect(
+      value: current.label,
+      options: [for (final b in pack.builds) b.label],
+      onChanged: (label) => c.selectBuild(pack.builds.firstWhere((b) => b.label == label)),
+      label: 'Build',
+    );
+  }
+}
+
+/// Asks for a game key and redeems it. The unlocked pack lands in the deck.
+Future<void> showRedeemDialog(BuildContext context, LibraryController controller) {
+  return showDialog<void>(
+    context: context,
+    barrierColor: const Color.fromRGBO(0, 0, 0, .7),
+    builder: (_) => PaletteScope(
+      palette: context.pal,
+      child: DefaultTextStyle(
+        style: DefaultTextStyle.of(context).style,
+        child: _RedeemDialog(controller: controller),
+      ),
+    ),
+  );
+}
+
+class _RedeemDialog extends StatefulWidget {
+  const _RedeemDialog({required this.controller});
+  final LibraryController controller;
+
+  @override
+  State<_RedeemDialog> createState() => _RedeemDialogState();
+}
+
+class _RedeemDialogState extends State<_RedeemDialog> {
+  final _code = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_busy) return;
+    if (_code.text.trim().isEmpty) {
+      setState(() => _error = 'Enter a key.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.controller.redeem(_code.text);
+      if (mounted) Navigator.of(context).pop();
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = e.message;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.pal;
+    OutlineInputBorder border(Color c) =>
+        OutlineInputBorder(borderRadius: BorderRadius.zero, borderSide: BorderSide(color: c));
+    return Dialog(
+      backgroundColor: kBg,
+      shape: RoundedRectangleBorder(side: BorderSide(color: pal.a(.5))),
+      child: SizedBox(
+        width: 460,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('REDEEM KEY', style: vt(36, height: 1, color: pal.ph, shadows: pal.crtShadow)),
+              const SizedBox(height: 8),
+              Text(
+                'A key unlocks a pack, or a dev build of one, for this launcher.',
+                style: mono(12, height: 1.5, color: pal.dim),
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                controller: _code,
+                autofocus: true,
+                enabled: !_busy,
+                onSubmitted: (_) => _submit(),
+                cursorColor: pal.ph,
+                style: mono(15, ls: .12, color: pal.ph),
+                decoration: InputDecoration(
+                  isDense: true,
+                  filled: true,
+                  fillColor: kBg,
+                  hintText: 'XXXXX-XXXXX-XXXXX-XXXXX',
+                  hintStyle: mono(15, ls: .12, color: pal.dim),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  enabledBorder: border(pal.a(.5)),
+                  disabledBorder: border(pal.a(.3)),
+                  focusedBorder: border(pal.ph),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 18,
+                child: Text(
+                  _busy ? '> CONTACTING boloto.studio…' : (_error == null ? '' : '> ${_error!.toUpperCase()}'),
+                  style: mono(11, ls: .08, color: _error == null ? pal.dim : pal.ph),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TermButton(label: 'Cancel', onTap: _busy ? null : () => Navigator.of(context).pop()),
+                  const SizedBox(width: 12),
+                  TermButton(label: 'Redeem', icon: TermIcon.play, onTap: _busy ? null : _submit),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

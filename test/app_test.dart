@@ -1,8 +1,12 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:lib_boloto_launcher/api/launcher_api.dart';
 import 'package:lib_boloto_launcher/app/settings.dart';
 import 'package:lib_boloto_launcher/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,12 +32,78 @@ Future<void> loadFonts() async {
   }
 }
 
+Map<String, Object?> build(String slug, String name, {bool release = false, bool key = false}) => {
+      'slug': slug,
+      'name': name,
+      'version': '',
+      'is_release': release,
+      'is_published': !key,
+      'unlocked_by_key': key,
+      'git_url': 'https://github.com/boloto-studio/vatra',
+      'git_branch': release ? 'main' : 'dev',
+      'minecraft_version': '1.20.1',
+      'mod_loader': 'forge',
+      'loader_version': '47.3.0',
+      'updated_at': '2026-11-02T00:00:00Z',
+    };
+
+Map<String, Object?> vatra(List<Map<String, Object?>> builds) => {
+      'slug': 'vatra',
+      'name': 'Vatra',
+      'description': 'A Carpathian fantasy RPG rooted in Hutsul mythology.',
+      'code': 'VTR-02',
+      'status': 'IN DEVELOPMENT',
+      'color': '#FFB000',
+      'features': ['Village building & hired squads', 'Magic & dragons'],
+      'icon': null,
+      'logo': null,
+      'background': null,
+      'builds': builds,
+    };
+
+/// Stand-in for boloto.studio: Vatra's release is public, and the key
+/// `DEV-KEY` unlocks its dev build.
+MockClient fakeServer() {
+  var unlocked = false;
+  http.Response ok(Object body, [int status = 200]) =>
+      http.Response(jsonEncode(body), status, headers: {'content-type': 'application/json'});
+  List<Map<String, Object?>> builds() => [
+        build('vatra', 'Release', release: true),
+        if (unlocked) build('vatra-dev', 'Dev', key: true),
+      ];
+  return MockClient((req) async {
+    switch (req.url.path) {
+      case '/api/launcher/modpacks/':
+        return ok({
+          'modpacks': [vatra(builds())],
+        });
+      case '/api/launcher/clients/':
+        return ok({'token': 'tok', 'client_id': 1}, 201);
+      case '/api/launcher/keys/redeem/':
+        if (req.headers['Authorization'] != 'Bearer tok') {
+          return ok({'error': {'code': 'unauthorized', 'message': 'Register first.'}}, 401);
+        }
+        if (jsonDecode(req.body)['code'] != 'DEV-KEY') {
+          return ok({'error': {'code': 'invalid_key', 'message': 'That key is not valid.'}}, 404);
+        }
+        unlocked = true;
+        return ok({
+          'already_redeemed': false,
+          'unlocked': {'slug': 'vatra-dev', 'name': 'Vatra / Dev'},
+          'modpack': vatra(builds()),
+        });
+    }
+    return http.Response('not found', 404);
+  });
+}
+
 Future<void> boot(WidgetTester t, [Map<String, Object> prefs = const {}, Size size = const Size(1360, 860)]) async {
   t.view.physicalSize = size;
   t.view.devicePixelRatio = 1;
   addTearDown(t.view.reset);
   SharedPreferences.setMockInitialValues(prefs);
-  await t.pumpWidget(BolotoApp(settings: await AppSettings.load()));
+  final api = LauncherApi(client: fakeServer(), baseUrl: 'https://test.invalid');
+  await t.pumpWidget(BolotoApp(settings: await AppSettings.load(), api: api));
   await wait(t, 3500);
 }
 
@@ -58,6 +128,30 @@ void main() {
     await t.tap(find.text('EJECT'));
     await wait(t, 1500);
     expect(find.text('NO MEDIA'), findsOneWidget);
+  });
+
+  testWidgets('redeeming a key adds the dev build and loads it', (t) async {
+    await boot(t);
+    expect(find.text('NO MEDIA'), findsOneWidget);
+
+    await t.tap(find.text('REDEEM KEY'));
+    await wait(t, 500);
+    await t.enterText(find.byType(TextField), 'nope');
+    await t.tap(find.text('REDEEM').last);
+    await wait(t, 300);
+    expect(find.text('> THAT KEY IS NOT VALID.'), findsOneWidget);
+
+    await t.enterText(find.byType(TextField), 'DEV-KEY');
+    await t.tap(find.text('REDEEM').last);
+    await wait(t, 2800);
+
+    // Dialog closed, Vatra loaded with the dev build picked.
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('READY'), findsOneWidget);
+    expect(find.text('DEV'), findsOneWidget);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('launcher.token'), 'tok');
   });
 
   testWidgets('settings are written through and restored on boot', (t) async {

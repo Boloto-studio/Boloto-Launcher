@@ -11,24 +11,41 @@ import 'widgets.dart';
 enum MediaKind { cassette, floppy }
 
 /// `.mark` — the pack logo, tinted to the label ink (a CSS mask in the
-/// reference), or a dashed placeholder square.
+/// reference), or a dashed placeholder square. A logo uploaded on the
+/// website ([url]) wins over the bundled one.
 class PackMarkView extends StatelessWidget {
-  const PackMarkView({super.key, required this.mark, required this.color, this.size = 34});
+  const PackMarkView({super.key, required this.mark, required this.color, this.url, this.size = 34});
   final PackMark mark;
   final Color color;
+  final String? url;
   final double size;
 
-  @override
-  Widget build(BuildContext context) {
-    if (mark == PackMark.none) {
-      return Opacity(
+  Widget _placeholder() => Opacity(
         opacity: .7,
         child: SizedBox.square(
           dimension: size,
           child: CustomPaint(painter: DashedBorderPainter(color: color, width: 1.5, dash: 4.5, gap: 3)),
         ),
       );
+
+  @override
+  Widget build(BuildContext context) {
+    if (url != null) {
+      return Image.network(
+        url!,
+        width: size,
+        height: size,
+        color: color,
+        colorBlendMode: BlendMode.srcIn,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (_, _, _) => mark == PackMark.none ? _placeholder() : _bundled(),
+      );
     }
+    if (mark == PackMark.none) return _placeholder();
+    return _bundled();
+  }
+
+  Widget _bundled() {
     return Image.asset(
       'assets/images/vatra_mark.png',
       width: size,
@@ -48,7 +65,7 @@ class PackEmblem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pal = context.pal;
-    final img = PackMarkView(mark: pack.mark, color: pal.ph, size: 132);
+    final img = PackMarkView(mark: pack.mark, url: pack.iconUrl, color: pal.ph, size: 132);
     return Reveal.scan(
       steps: 14,
       ms: 900,
@@ -57,7 +74,7 @@ class PackEmblem extends StatelessWidget {
           // drop-shadow(0 0 10px ph/70%) drop-shadow(0 0 2px ph)
           ImageFiltered(
             imageFilter: _blur(5),
-            child: PackMarkView(mark: pack.mark, color: pal.a(.7), size: 132),
+            child: PackMarkView(mark: pack.mark, url: pack.iconUrl, color: pal.a(.7), size: 132),
           ),
           ImageFiltered(imageFilter: _blur(1), child: img),
           img,
@@ -148,7 +165,7 @@ class Cassette extends StatelessWidget {
             decoration: BoxDecoration(color: pack.color, borderRadius: BorderRadius.circular(2)),
             child: Row(
               children: [
-                PackMarkView(mark: pack.mark, color: pack.ink),
+                PackMarkView(mark: pack.mark, url: pack.iconUrl, color: pack.ink),
                 const SizedBox(width: 7),
                 _LabelText(code: '${pack.code} · SIDE A', title: pack.title, ink: pack.ink),
               ],
@@ -235,7 +252,7 @@ class Floppy extends StatelessWidget {
             decoration: BoxDecoration(color: pack.color, borderRadius: BorderRadius.circular(2)),
             child: Row(
               children: [
-                PackMarkView(mark: pack.mark, color: pack.ink, size: 30),
+                PackMarkView(mark: pack.mark, url: pack.iconUrl, color: pack.ink, size: 30),
                 const SizedBox(width: 5),
                 _LabelText(code: pack.code, title: pack.short, ink: pack.ink, titleSize: 16),
               ],

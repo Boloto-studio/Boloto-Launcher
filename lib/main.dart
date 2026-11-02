@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'api/launcher_api.dart';
 import 'app/settings.dart';
 import 'shell/shell.dart';
 import 'ui/palette.dart';
@@ -24,12 +25,13 @@ Future<void> main() async {
     },
   );
 
-  runApp(BolotoApp(settings: settings));
+  runApp(BolotoApp(settings: settings, api: LauncherApi()));
 }
 
 class BolotoApp extends StatelessWidget {
-  const BolotoApp({super.key, required this.settings});
+  const BolotoApp({super.key, required this.settings, required this.api});
   final AppSettings settings;
+  final LauncherApi api;
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +48,7 @@ class BolotoApp extends StatelessWidget {
           highlightColor: Colors.transparent,
         ),
         builder: (context, child) => _PaletteHost(child: child!),
-        home: const Shell(),
+        home: Shell(api: api),
       ),
     );
   }

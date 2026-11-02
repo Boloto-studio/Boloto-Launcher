@@ -250,7 +250,7 @@ class _DisplaySection extends StatelessWidget {
                   SizedBox(
                     width: 150,
                     height: 96,
-                    child: FittedBox(child: MediaView(kind: m, pack: packs.first)),
+                    child: FittedBox(child: MediaView(kind: m, pack: samplePack)),
                   ),
                   const SizedBox(height: 10),
                   Text(m.name.toUpperCase(), style: mono(13, ls: .08)),
