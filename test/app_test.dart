@@ -78,7 +78,19 @@ MockClient fakeServer({bool emptyRack = false}) {
       ];
   return MockClient((req) async {
     requests.add('${req.method} ${req.url.path} ${req.headers['Authorization'] ?? '-'}');
-    final account = {'username': 'mavka', 'avatar': null, 'minecraft_username': null};
+    final account = {
+      'username': 'mavka',
+      'display_name': 'Lisova Mavka',
+      'avatar': null,
+      'minecraft_username': 'Mavka_UA',
+      'bio': 'Forest spirit. Do not follow the singing.',
+      'tier': 'Frog',
+      'location': null,
+      'member_since': '2026-09-14',
+      'friends_count': 3,
+      'unlocked_count': 1,
+      'profile_url': 'https://test.invalid/frogs/profile/42/',
+    };
     switch (req.url.path) {
       case '/api/launcher/auth/login/':
         final body = jsonDecode(req.body);
@@ -228,7 +240,17 @@ void main() {
 
     await t.tap(find.text('MAVKA'));
     await wait(t, 500);
-    expect(find.text('SIGNED IN AS'), findsOneWidget);
+    // Mini profile: name, handle, tier, bio, stats and a link to the full profile.
+    expect(find.text('LISOVA MAVKA'), findsOneWidget);
+    expect(find.text('@mavka'), findsOneWidget);
+    expect(find.text('FROG'), findsOneWidget);
+    expect(find.text('Forest spirit. Do not follow the singing.'), findsOneWidget);
+    expect(find.text('Mavka_UA'), findsOneWidget);
+    expect(find.text('[UNKNOWN]'), findsOneWidget); // no location set
+    expect(find.text('SEP 2026'), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
+    expect(find.text('VIEW FULL PROFILE'), findsOneWidget);
+    expect(find.text('L'), findsOneWidget); // initials stand in for the missing avatar
     await t.tap(find.text('SIGN OUT'));
     await wait(t, 500);
     expect(find.text('SIGN IN'), findsOneWidget);
