@@ -61,10 +61,15 @@ Map<String, Object?> vatra(List<Map<String, Object?>> builds) => {
       'builds': builds,
     };
 
-/// Stand-in for boloto.studio: Vatra's release is public, and the key
-/// `DEV-KEY` unlocks its dev build.
+/// Every request the fake server saw, as `METHOD path [token]`.
+final requests = <String>[];
+
+/// Stand-in for boloto.studio: Vatra's release is public, the key `DEV-KEY`
+/// unlocks its dev build, and `mavka` / `pisnya` is a website account.
 MockClient fakeServer() {
   var unlocked = false;
+  var signedIn = false;
+  requests.clear();
   http.Response ok(Object body, [int status = 200]) =>
       http.Response(jsonEncode(body), status, headers: {'content-type': 'application/json'});
   List<Map<String, Object?>> builds() => [
@@ -72,7 +77,21 @@ MockClient fakeServer() {
         if (unlocked) build('vatra-dev', 'Dev', key: true),
       ];
   return MockClient((req) async {
+    requests.add('${req.method} ${req.url.path} ${req.headers['Authorization'] ?? '-'}');
+    final account = {'username': 'mavka', 'avatar': null, 'minecraft_username': null};
     switch (req.url.path) {
+      case '/api/launcher/auth/login/':
+        final body = jsonDecode(req.body);
+        if (body['username'] != 'mavka' || body['password'] != 'pisnya') {
+          return ok({'error': {'code': 'invalid_credentials', 'message': 'Wrong username or password.'}}, 401);
+        }
+        signedIn = true;
+        return ok({'token': 'acct', 'account': account});
+      case '/api/launcher/auth/logout/':
+        signedIn = false;
+        return ok({'account': null});
+      case '/api/launcher/auth/me/':
+        return ok({'account': signedIn ? account : null});
       case '/api/launcher/modpacks/':
         return ok({
           'modpacks': [vatra(builds())],
@@ -152,6 +171,37 @@ void main() {
 
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('launcher.token'), 'tok');
+  });
+
+  testWidgets('signing in and out from the header', (t) async {
+    await boot(t);
+    await t.tap(find.text('SIGN IN'));
+    await wait(t, 500);
+
+    final fields = find.byType(TextField);
+    await t.enterText(fields.at(0), 'mavka');
+    await t.enterText(fields.at(1), 'wrong');
+    await t.tap(find.text('SIGN IN').last);
+    await wait(t, 300);
+    expect(find.text('> WRONG USERNAME OR PASSWORD.'), findsOneWidget);
+
+    await t.enterText(fields.at(1), 'pisnya');
+    await t.tap(find.text('SIGN IN').last);
+    await wait(t, 500);
+
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('MAVKA'), findsOneWidget);
+    expect((await SharedPreferences.getInstance()).getString('launcher.token'), 'acct');
+    // The rack reloaded with the account's token.
+    expect(requests, contains('GET /api/launcher/modpacks/ Bearer acct'));
+
+    await t.tap(find.text('MAVKA'));
+    await wait(t, 500);
+    expect(find.text('SIGNED IN AS'), findsOneWidget);
+    await t.tap(find.text('SIGN OUT'));
+    await wait(t, 500);
+    expect(find.text('SIGN IN'), findsOneWidget);
+    expect(requests, contains('POST /api/launcher/auth/logout/ Bearer acct'));
   });
 
   testWidgets('settings are written through and restored on boot', (t) async {

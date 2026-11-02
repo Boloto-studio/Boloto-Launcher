@@ -27,6 +27,9 @@ class LibraryController extends ChangeNotifier {
   final Set<String> _installed = {};
   final List<Timer> _timers = [];
 
+  /// Website account signed in on this launcher, for the run log.
+  String? accountName;
+
   List<Pack> _packs = const [];
   RackState _rack = RackState.loading;
   String _rackError = '';
@@ -132,7 +135,7 @@ class LibraryController extends ChangeNotifier {
     if (p == null) return const [];
     return [
       '[launcher] starting ${p.title} (${build?.label ?? '—'})',
-      '[launcher] session: Collert (Microsoft)',
+      '[launcher] account: ${accountName ?? 'guest'}',
       '[game] loading mods...',
       '[game] sound engine started',
       '[game] world list ready',

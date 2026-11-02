@@ -18,6 +18,21 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+/// A boloto.studio website account signed in on this launcher.
+class Account {
+  const Account({required this.username, this.avatarUrl, this.minecraftUsername});
+
+  final String username;
+  final String? avatarUrl;
+  final String? minecraftUsername;
+
+  factory Account.fromJson(Map<String, dynamic> json) => Account(
+        username: json['username'] as String,
+        avatarUrl: json['avatar'] as String?,
+        minecraftUsername: json['minecraft_username'] as String?,
+      );
+}
+
 class RedeemResult {
   const RedeemResult({required this.pack, required this.buildSlug, required this.alreadyRedeemed});
   final Pack pack;
@@ -27,9 +42,10 @@ class RedeemResult {
 
 /// Talks to the website's `/api/launcher/` endpoints.
 ///
-/// The launcher install is identified by a token the server hands out the
-/// first time a key is redeemed; it is kept in shared preferences and sent
-/// with every request so unlocked packs show up in the catalog.
+/// The launcher install is identified by a token the server hands out when
+/// someone signs in, or the first time a key is redeemed while signed out.
+/// It is kept in shared preferences and sent with every request, so the
+/// catalog includes whatever this launcher (or its account) has unlocked.
 class LauncherApi {
   LauncherApi({http.Client? client, String? baseUrl})
       : _client = client ?? http.Client(),
@@ -69,6 +85,49 @@ class LauncherApi {
       alreadyRedeemed: json['already_redeemed'] as bool? ?? false,
     );
   }
+
+  /// The account signed in on this launcher, or null when signed out.
+  Future<Account?> fetchAccount() async {
+    final token = await _storedToken();
+    if (token == null) return null;
+    try {
+      final json = await _send('GET', 'auth/me/', token: token);
+      final account = json['account'];
+      return account is Map<String, dynamic> ? Account.fromJson(account) : null;
+    } on ApiException catch (e) {
+      if (e.code != 'unauthorized') rethrow;
+      // The server forgot this launcher; start over as a new one.
+      await _prefs().then((p) => p.remove(PrefKeys.launcherToken));
+      return null;
+    }
+  }
+
+  /// Signs in with a website account. Sends the current token (if any) so
+  /// keys redeemed here while signed out move into the account.
+  Future<Account> signIn(String username, String password) async {
+    final json = await _send(
+      'POST',
+      'auth/login/',
+      token: await _storedToken(),
+      body: {'username': username, 'password': password},
+    );
+    await _prefs().then((p) => p.setString(PrefKeys.launcherToken, json['token'] as String));
+    return Account.fromJson(json['account'] as Map<String, dynamic>);
+  }
+
+  Future<void> signOut() async {
+    final token = await _storedToken();
+    if (token == null) return;
+    try {
+      await _send('POST', 'auth/logout/', token: token);
+    } on ApiException catch (e) {
+      // Unknown token means we're already signed out as far as the server cares.
+      if (e.code != 'unauthorized') rethrow;
+      await _prefs().then((p) => p.remove(PrefKeys.launcherToken));
+    }
+  }
+
+  Future<SharedPreferences> _prefs() => SharedPreferences.getInstance();
 
   Future<String?> _storedToken() async => (await SharedPreferences.getInstance()).getString(PrefKeys.launcherToken);
 

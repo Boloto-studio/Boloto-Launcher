@@ -109,4 +109,46 @@ void main() {
     );
     await expectLater(api.fetchCatalog(), throwsA(isA<ApiException>().having((e) => e.code, 'code', 'network')));
   });
+
+  test('sign in stores the new token and sends the old one', () async {
+    SharedPreferences.setMockInitialValues({'launcher.token': 'anon'});
+    String? sentWith;
+    final api = LauncherApi(
+      baseUrl: 'https://test.invalid',
+      client: MockClient((req) async {
+        if (req.url.path.endsWith('/auth/login/')) {
+          sentWith = req.headers['Authorization'];
+          return reply({
+            'token': 'acct',
+            'account': {'username': 'mavka', 'avatar': null, 'minecraft_username': 'Mavka_UA'},
+          });
+        }
+        if (req.url.path.endsWith('/auth/me/')) {
+          return req.headers['Authorization'] == 'Bearer acct'
+              ? reply({'account': {'username': 'mavka'}})
+              : reply({'error': {'code': 'unauthorized', 'message': 'Unknown launcher.'}}, 401);
+        }
+        return reply({'account': null});
+      }),
+    );
+
+    final account = await api.signIn('mavka', 'pisnya');
+    expect(sentWith, 'Bearer anon');
+    expect(account.minecraftUsername, 'Mavka_UA');
+    expect((await SharedPreferences.getInstance()).getString('launcher.token'), 'acct');
+    expect((await api.fetchAccount())?.username, 'mavka');
+
+    // A token the server no longer knows is dropped.
+    SharedPreferences.setMockInitialValues({'launcher.token': 'stale'});
+    expect(await api.fetchAccount(), isNull);
+    expect((await SharedPreferences.getInstance()).getString('launcher.token'), isNull);
+  });
+
+  test('fetchAccount makes no request without a token', () async {
+    final api = LauncherApi(
+      baseUrl: 'https://test.invalid',
+      client: MockClient((_) async => fail('should not be called')),
+    );
+    expect(await api.fetchAccount(), isNull);
+  });
 }

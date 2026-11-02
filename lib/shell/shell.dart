@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../account/account_controller.dart';
+import '../account/account_dialog.dart';
 import '../api/launcher_api.dart';
 import '../app/settings.dart';
 import '../library/library_controller.dart';
@@ -42,12 +44,15 @@ class Shell extends StatefulWidget {
 class _ShellState extends State<Shell> {
   AppScreen _screen = AppScreen.library;
   late final _library = LibraryController(api: widget.api);
+  late final _account = AccountController(api: widget.api, onSessionChanged: _library.refresh);
   late final Timer _introTimer;
 
   @override
   void initState() {
     super.initState();
     _library.refresh();
+    _account.addListener(_syncAccountName);
+    _account.load();
     // Once the cold-start intro has played, later screens stagger in faster.
     _introTimer = Timer(const Duration(seconds: 3), () => Motion.delayScale = .3);
   }
@@ -55,9 +60,13 @@ class _ShellState extends State<Shell> {
   @override
   void dispose() {
     _introTimer.cancel();
+    _account.removeListener(_syncAccountName);
+    _account.dispose();
     _library.dispose();
     super.dispose();
   }
+
+  void _syncAccountName() => _library.accountName = _account.account?.username;
 
   void _go(AppScreen s) {
     if (s != _screen) setState(() => _screen = s);
@@ -98,7 +107,7 @@ class _ShellState extends State<Shell> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _Header(screen: _screen, onGo: _go),
+                _Header(screen: _screen, onGo: _go, account: _account),
                 Expanded(child: KeyedSubtree(key: ValueKey(_screen), child: body)),
                 _Footer(
                   instances: settings.instancesDirOrDefault,
@@ -120,9 +129,10 @@ class _ShellState extends State<Shell> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.screen, required this.onGo});
+  const _Header({required this.screen, required this.onGo, required this.account});
   final AppScreen screen;
   final ValueChanged<AppScreen> onGo;
+  final AccountController account;
 
   @override
   Widget build(BuildContext context) {
@@ -187,13 +197,19 @@ class _Header extends StatelessWidget {
           const SizedBox(width: 18),
           Reveal.fade(
             d: 1.1,
-            child: TermButton(
-              label: 'Collert',
-              icon: TermIcon.user,
-              fontSize: 11,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              semanticLabel: 'Account: Collert',
-              onTap: () {}, // account menu: not wired yet
+            child: ListenableBuilder(
+              listenable: account,
+              builder: (context, _) {
+                final name = account.account?.username;
+                return TermButton(
+                  label: !account.loaded ? '…' : (name == null ? 'Sign in' : _short(name)),
+                  icon: TermIcon.user,
+                  fontSize: 11,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  semanticLabel: name == null ? 'Sign in' : 'Account: $name',
+                  onTap: account.loaded ? () => showAccountDialog(context, account) : null,
+                );
+              },
             ),
           ),
         ],
@@ -238,3 +254,6 @@ class _Footer extends StatelessWidget {
     );
   }
 }
+
+/// Keeps long usernames from pushing the header around.
+String _short(String name) => name.length <= 16 ? name : '${name.substring(0, 15)}…';

@@ -29,3 +29,10 @@ Game keys are redeemed from **Redeem key** on the rack. The first redemption
 registers this install with the server and stores its token in shared
 preferences (`launcher.token`), so unlocked packs and builds show up on later
 launches.
+
+## Accounts
+
+The account button in the header signs in with a boloto.studio website
+account (the same username and password as frogs.net). Keys redeemed while
+signed in belong to the account, so the unlocks show up on any PC the user
+signs in on. Keys redeemed before signing in move into the account.

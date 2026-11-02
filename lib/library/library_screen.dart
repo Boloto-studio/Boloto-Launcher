@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/launcher_api.dart';
 import '../app/settings.dart';
 import '../ui/crt.dart';
+import '../ui/dialog.dart';
 import '../ui/icons.dart';
 import '../ui/layout.dart';
 import '../ui/media.dart';
@@ -121,7 +122,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             delay: 1.3,
           ),
         DeckPhase.loading => _Console(lines: c.bootLines, size: 24, stepMs: 7),
-        DeckPhase.ready => _Ready(pack: c.pack!, build: c.build),
+        DeckPhase.ready => _Ready(pack: c.pack!, selected: c.build),
         DeckPhase.installing => _Installing(controller: c),
         DeckPhase.running => _Console(lines: c.runLines, size: 22, stepMs: 9),
       };
@@ -213,9 +214,11 @@ class _Console extends StatelessWidget {
 }
 
 class _Ready extends StatelessWidget {
-  const _Ready({required this.pack, required this.build});
+  const _Ready({required this.pack, required this.selected});
   final Pack pack;
-  final PackBuild? build;
+
+  /// The build picked in the deck (release, dev, …).
+  final PackBuild? selected;
 
   @override
   Widget build(BuildContext context) {
@@ -304,10 +307,13 @@ class _Ready extends StatelessWidget {
     );
   }
 
-  String get _mc => build == null || build!.minecraftVersion.isEmpty ? '[MC VERSION]' : build!.minecraftVersion;
+  String get _mc {
+    final b = selected;
+    return b == null || b.minecraftVersion.isEmpty ? '[MC VERSION]' : b.minecraftVersion;
+  }
 
   String get _loader {
-    final b = build;
+    final b = selected;
     if (b == null || b.modLoader.isEmpty) return '[LOADER]';
     return [b.modLoader.toUpperCase(), if (b.loaderVersion.isNotEmpty) b.loaderVersion].join(' ');
   }
@@ -495,19 +501,8 @@ class _BuildPicker extends StatelessWidget {
 }
 
 /// Asks for a game key and redeems it. The unlocked pack lands in the deck.
-Future<void> showRedeemDialog(BuildContext context, LibraryController controller) {
-  return showDialog<void>(
-    context: context,
-    barrierColor: const Color.fromRGBO(0, 0, 0, .7),
-    builder: (_) => PaletteScope(
-      palette: context.pal,
-      child: DefaultTextStyle(
-        style: DefaultTextStyle.of(context).style,
-        child: _RedeemDialog(controller: controller),
-      ),
-    ),
-  );
-}
+Future<void> showRedeemDialog(BuildContext context, LibraryController controller) =>
+    showTermDialog<void>(context, _RedeemDialog(controller: controller));
 
 class _RedeemDialog extends StatefulWidget {
   const _RedeemDialog({required this.controller});
@@ -553,67 +548,24 @@ class _RedeemDialogState extends State<_RedeemDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final pal = context.pal;
-    OutlineInputBorder border(Color c) =>
-        OutlineInputBorder(borderRadius: BorderRadius.zero, borderSide: BorderSide(color: c));
-    return Dialog(
-      backgroundColor: kBg,
-      shape: RoundedRectangleBorder(side: BorderSide(color: pal.a(.5))),
-      child: SizedBox(
-        width: 460,
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('REDEEM KEY', style: vt(36, height: 1, color: pal.ph, shadows: pal.crtShadow)),
-              const SizedBox(height: 8),
-              Text(
-                'A key unlocks a pack, or a dev build of one, for this launcher.',
-                style: mono(12, height: 1.5, color: pal.dim),
-              ),
-              const SizedBox(height: 18),
-              TextField(
-                controller: _code,
-                autofocus: true,
-                enabled: !_busy,
-                onSubmitted: (_) => _submit(),
-                cursorColor: pal.ph,
-                style: mono(15, ls: .12, color: pal.ph),
-                decoration: InputDecoration(
-                  isDense: true,
-                  filled: true,
-                  fillColor: kBg,
-                  hintText: 'XXXXX-XXXXX-XXXXX-XXXXX',
-                  hintStyle: mono(15, ls: .12, color: pal.dim),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                  enabledBorder: border(pal.a(.5)),
-                  disabledBorder: border(pal.a(.3)),
-                  focusedBorder: border(pal.ph),
-                ),
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                height: 18,
-                child: Text(
-                  _busy ? '> CONTACTING boloto.studio…' : (_error == null ? '' : '> ${_error!.toUpperCase()}'),
-                  style: mono(11, ls: .08, color: _error == null ? pal.dim : pal.ph),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TermButton(label: 'Cancel', onTap: _busy ? null : () => Navigator.of(context).pop()),
-                  const SizedBox(width: 12),
-                  TermButton(label: 'Redeem', icon: TermIcon.play, onTap: _busy ? null : _submit),
-                ],
-              ),
-            ],
-          ),
+    return TermDialog(
+      title: 'REDEEM KEY',
+      blurb: 'A key unlocks a pack, or a dev build of one. Sign in first to keep it on your account.',
+      actions: [
+        TermButton(label: 'Cancel', onTap: _busy ? null : () => Navigator.of(context).pop()),
+        TermButton(label: 'Redeem', icon: TermIcon.play, onTap: _busy ? null : _submit),
+      ],
+      children: [
+        TermField(
+          controller: _code,
+          autofocus: true,
+          enabled: !_busy,
+          hint: 'XXXXX-XXXXX-XXXXX-XXXXX',
+          onSubmitted: (_) => _submit(),
         ),
-      ),
+        const SizedBox(height: 10),
+        FormStatus(busy: _busy, busyText: '> CONTACTING boloto.studio…', error: _error),
+      ],
     );
   }
 }
