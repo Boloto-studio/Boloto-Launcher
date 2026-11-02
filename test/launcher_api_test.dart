@@ -151,4 +151,18 @@ void main() {
     );
     expect(await api.fetchAccount(), isNull);
   });
+
+  test('a bare 404 says the site needs updating', () async {
+    final api = LauncherApi(
+      baseUrl: 'https://boloto.studio',
+      client: MockClient((_) async => http.Response('<h1>Not Found</h1>', 404)),
+    );
+    await expectLater(
+      api.signIn('mavka', 'pisnya'),
+      throwsA(isA<ApiException>()
+          .having((e) => e.code, 'code', 'not_supported')
+          .having((e) => e.message, 'message', contains('boloto.studio'))),
+    );
+    expect(api.registerUrl.toString(), 'https://boloto.studio/frogs/register/');
+  });
 }

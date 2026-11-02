@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api/launcher_api.dart';
 import '../ui/dialog.dart';
@@ -6,8 +7,6 @@ import '../ui/icons.dart';
 import '../ui/palette.dart';
 import '../ui/widgets.dart';
 import 'account_controller.dart';
-
-const registerUrl = 'boloto.studio/frogs/register/';
 
 /// Sign-in form when signed out; account details and Sign out when signed in.
 Future<void> showAccountDialog(BuildContext context, AccountController controller) => showTermDialog<void>(
@@ -34,6 +33,17 @@ class _SignInDialogState extends State<_SignInDialog> {
     _username.dispose();
     _password.dispose();
     super.dispose();
+  }
+
+  Future<void> _openRegister() async {
+    final url = widget.controller.api.registerUrl;
+    var opened = false;
+    try {
+      opened = await launchUrl(url, mode: LaunchMode.externalApplication);
+    } on Exception {
+      opened = false;
+    }
+    if (!opened && mounted) setState(() => _error = 'Could not open $url');
   }
 
   Future<void> _submit() async {
@@ -93,7 +103,19 @@ class _SignInDialogState extends State<_SignInDialog> {
         const SizedBox(height: 10),
         FormStatus(busy: _busy, busyText: '> AUTHENTICATING…', error: _error),
         const SizedBox(height: 6),
-        Text('NO ACCOUNT? REGISTER AT $registerUrl', style: mono(11, ls: .08, color: pal.dim)),
+        Row(
+          children: [
+            Expanded(child: Text('NO ACCOUNT YET?', style: mono(11, ls: .08, color: pal.dim))),
+            TermButton(
+              label: 'Create account',
+              icon: TermIcon.globe,
+              fontSize: 11,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              semanticLabel: 'Create an account on boloto.studio (opens your browser)',
+              onTap: _openRegister,
+            ),
+          ],
+        ),
       ],
     );
   }

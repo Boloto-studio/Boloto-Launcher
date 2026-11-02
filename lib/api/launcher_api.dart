@@ -60,6 +60,11 @@ class LauncherApi {
 
   Uri _uri(String path) => Uri.parse('$baseUrl/api/launcher/$path');
 
+  /// The website's sign-up page (frogs.net lives on the same site).
+  Uri get registerUrl => Uri.parse('$baseUrl/frogs/register/');
+
+  String get _host => Uri.tryParse(baseUrl)?.host ?? baseUrl;
+
   Future<List<Pack>> fetchCatalog() async {
     final json = await _send('GET', 'modpacks/', token: await _storedToken());
     return [
@@ -152,7 +157,7 @@ class LauncherApi {
     try {
       response = await http.Response.fromStream(await _client.send(request).timeout(_timeout));
     } on Exception {
-      throw const ApiException('network', 'Could not reach boloto.studio.');
+      throw ApiException('network', 'Could not reach $_host.');
     }
 
     Object? decoded;
@@ -167,6 +172,10 @@ class LauncherApi {
     final error = decoded is Map<String, dynamic> ? decoded['error'] : null;
     if (error is Map<String, dynamic>) {
       throw ApiException(error['code'] as String? ?? 'error', error['message'] as String? ?? 'Request failed.');
+    }
+    if (response.statusCode == 404) {
+      // A 404 without our JSON error body: the site doesn't have this endpoint.
+      throw ApiException('not_supported', "$_host doesn't support this yet. The website needs updating.");
     }
     throw ApiException('http_${response.statusCode}', 'Server error (${response.statusCode}).');
   }
