@@ -66,7 +66,7 @@ final requests = <String>[];
 
 /// Stand-in for boloto.studio: Vatra's release is public, the key `DEV-KEY`
 /// unlocks its dev build, and `mavka` / `pisnya` is a website account.
-MockClient fakeServer() {
+MockClient fakeServer({bool emptyRack = false}) {
   var unlocked = false;
   var signedIn = false;
   requests.clear();
@@ -94,7 +94,7 @@ MockClient fakeServer() {
         return ok({'account': signedIn ? account : null});
       case '/api/launcher/modpacks/':
         return ok({
-          'modpacks': [vatra(builds())],
+          'modpacks': [if (!emptyRack) vatra(builds())],
         });
       case '/api/launcher/clients/':
         return ok({'token': 'tok', 'client_id': 1}, 201);
@@ -116,12 +116,17 @@ MockClient fakeServer() {
   });
 }
 
-Future<void> boot(WidgetTester t, [Map<String, Object> prefs = const {}, Size size = const Size(1360, 860)]) async {
+Future<void> boot(
+  WidgetTester t, {
+  Map<String, Object> prefs = const {},
+  Size size = const Size(1360, 860),
+  bool emptyRack = false,
+}) async {
   t.view.physicalSize = size;
   t.view.devicePixelRatio = 1;
   addTearDown(t.view.reset);
   SharedPreferences.setMockInitialValues(prefs);
-  final api = LauncherApi(client: fakeServer(), baseUrl: 'https://test.invalid');
+  final api = LauncherApi(client: fakeServer(emptyRack: emptyRack), baseUrl: 'https://test.invalid');
   await t.pumpWidget(BolotoApp(settings: await AppSettings.load(), api: api));
   await wait(t, 3500);
 }
@@ -149,28 +154,54 @@ void main() {
     expect(find.text('NO MEDIA'), findsOneWidget);
   });
 
-  testWidgets('redeeming a key adds the dev build and loads it', (t) async {
-    await boot(t);
-    expect(find.text('NO MEDIA'), findsOneWidget);
+  testWidgets('an empty rack says so instead of showing a blank tape', (t) async {
+    await boot(t, emptyRack: true);
+    expect(find.text('RACK EMPTY'), findsOneWidget);
+    expect(find.text('BLANK'), findsNothing);
+    expect(find.text('0 ON RACK'), findsOneWidget);
+  });
 
-    await t.tap(find.text('REDEEM KEY'));
-    await wait(t, 500);
+  testWidgets('redeeming a key in Settings › Keys adds the dev build and loads it', (t) async {
+    await boot(t);
+    expect(find.text('BLANK'), findsNothing);
+    expect(find.text('REDEEM KEY'), findsNothing); // no longer on the rack
+
+    await t.tap(find.text('SETTINGS'));
+    await wait(t, 2000);
+    await t.tap(find.text('03 · KEYS'));
+    await wait(t, 1500);
+    expect(find.text('[NONE YET]'), findsOneWidget);
+
     await t.enterText(find.byType(TextField), 'nope');
-    await t.tap(find.text('REDEEM').last);
+    await t.tap(find.text('REDEEM'));
     await wait(t, 300);
     expect(find.text('> THAT KEY IS NOT VALID.'), findsOneWidget);
 
     await t.enterText(find.byType(TextField), 'DEV-KEY');
-    await t.tap(find.text('REDEEM').last);
-    await wait(t, 2800);
+    await t.tap(find.text('REDEEM'));
+    await wait(t, 300);
+    expect(find.text("> VATRA / DEV UNLOCKED. IT'S IN THE DECK ON THE LIBRARY TAB."), findsOneWidget);
+    expect(find.text('01  VATRA / DEV'), findsOneWidget);
+    expect((await SharedPreferences.getInstance()).getString('launcher.token'), 'tok');
 
-    // Dialog closed, Vatra loaded with the dev build picked.
-    expect(find.byType(TextField), findsNothing);
+    await wait(t, 2500);
+    await t.tap(find.text('LIBRARY'));
+    await wait(t, 1500);
     expect(find.text('READY'), findsOneWidget);
     expect(find.text('DEV'), findsOneWidget);
+  });
 
-    final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getString('launcher.token'), 'tok');
+  testWidgets('rescan lives in Settings › Keys and reloads the rack', (t) async {
+    await boot(t);
+    final before = requests.where((r) => r.startsWith('GET /api/launcher/modpacks/')).length;
+    await t.tap(find.text('SETTINGS'));
+    await wait(t, 2000);
+    await t.tap(find.text('03 · KEYS'));
+    await wait(t, 1500);
+    await t.tap(find.text('RESCAN'));
+    await wait(t, 300);
+    expect(requests.where((r) => r.startsWith('GET /api/launcher/modpacks/')).length, before + 1);
+    expect(find.text('> 1 ON RACK'), findsOneWidget);
   });
 
   testWidgets('signing in and out from the header', (t) async {
@@ -229,7 +260,7 @@ void main() {
 
     // Fresh app from the same prefs comes back with them.
     await t.pumpWidget(const SizedBox());
-    await boot(t, saved);
+    await boot(t, prefs: saved);
     final s = await AppSettings.load();
     expect(s.phosphor, Phosphor.amber);
     expect(s.crt, isFalse);
@@ -237,7 +268,7 @@ void main() {
   });
 
   testWidgets('every screen fits the minimum window size', (t) async {
-    await boot(t, const {'ui.media': 'floppy'}, const Size(1200, 780));
+    await boot(t, prefs: const {'ui.media': 'floppy'}, size: const Size(1200, 780));
     await t.tap(find.text('VATRA').first);
     await wait(t, 2500);
     for (final tab in ['SERVERS', 'FROGS.NET', 'SETTINGS', 'LIBRARY']) {
@@ -247,6 +278,8 @@ void main() {
     await t.tap(find.text('SETTINGS'));
     await wait(t, 500);
     await t.tap(find.text('02 · LAUNCHER'));
+    await wait(t, 1500);
+    await t.tap(find.text('03 · KEYS'));
     await wait(t, 1500);
     // Any RenderFlex overflow would have failed the test by now.
   });

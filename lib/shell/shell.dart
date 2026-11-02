@@ -91,7 +91,7 @@ class _ShellState extends State<Shell> {
           title: 'OFF AIR',
           subtitle: 'UPLINK NOT YET ESTABLISHED ',
         ),
-      AppScreen.settings => const SettingsScreen(),
+      AppScreen.settings => SettingsScreen(library: _library),
     };
 
     return Material(
