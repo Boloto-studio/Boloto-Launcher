@@ -4,6 +4,8 @@ import '../api/launcher_api.dart';
 import '../app/settings.dart';
 import '../library/library_controller.dart';
 import '../library/packs.dart';
+import '../minecraft/minecraft_account.dart';
+import '../minecraft/minecraft_sign_in_dialog.dart';
 import '../ui/crt.dart';
 import '../ui/dialog.dart';
 import '../ui/icons.dart';
@@ -15,7 +17,7 @@ import '../ui/widgets.dart';
 
 enum _Section {
   display('01 · DISPLAY', 'PHOSPHOR · MEDIA · CRT', 'display.cfg'),
-  launcher('02 · LAUNCHER', 'INSTANCES · MEMORY · JAVA', 'launcher.cfg'),
+  launcher('02 · LAUNCHER', 'INSTANCES · MEMORY · MINECRAFT', 'launcher.cfg'),
   keys('03 · KEYS', 'REDEEM · UNLOCKED · RESCAN', 'keys.cfg');
 
   const _Section(this.title, this.blurb, this.file);
@@ -25,7 +27,10 @@ enum _Section {
 }
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.library});
+  const SettingsScreen({super.key, required this.library, required this.minecraft});
+
+  /// Minecraft account used to launch the game.
+  final MinecraftAccountController minecraft;
 
   /// The rack: keys unlock packs on it, and Rescan reloads it.
   final LibraryController library;
@@ -95,7 +100,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               key: ValueKey(_section),
                               child: switch (_section) {
                                 _Section.display => _DisplaySection(settings: settings),
-                                _Section.launcher => _LauncherSection(settings: settings),
+                                _Section.launcher => _LauncherSection(settings: settings, minecraft: widget.minecraft),
                                 _Section.keys => _KeysSection(library: widget.library),
                               },
                             ),
@@ -283,8 +288,9 @@ class _DisplaySection extends StatelessWidget {
 }
 
 class _LauncherSection extends StatefulWidget {
-  const _LauncherSection({required this.settings});
+  const _LauncherSection({required this.settings, required this.minecraft});
   final AppSettings settings;
+  final MinecraftAccountController minecraft;
 
   @override
   State<_LauncherSection> createState() => _LauncherSectionState();
@@ -359,6 +365,40 @@ class _LauncherSectionState extends State<_LauncherSection> {
           label: 'JAVA',
           desc: 'The right runtime is fetched for each Minecraft version.',
           child: const TagChip('AUTO-MANAGED'),
+        ),
+        _Row(
+          index: 3,
+          label: 'MINECRAFT',
+          desc: 'Microsoft account that owns Minecraft: Java Edition. Used to start the game.',
+          child: ListenableBuilder(
+            listenable: widget.minecraft,
+            builder: (context, _) {
+              final mc = widget.minecraft;
+              final account = mc.account;
+              if (!mc.loaded) return Text('…', style: mono(13));
+              if (account == null) {
+                return TermButton(
+                  label: 'Sign in with Microsoft',
+                  icon: TermIcon.user,
+                  onTap: () => showMinecraftSignInDialog(context, mc),
+                );
+              }
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Led(LedState.on),
+                  const SizedBox(width: 8),
+                  Text(account.name, style: mono(13, ls: .04)),
+                  if (account.offline) ...[
+                    const SizedBox(width: 10),
+                    const TagChip('OFFLINE'),
+                  ],
+                  const SizedBox(width: 16),
+                  TermButton(label: 'Sign out', fontSize: 11, onTap: mc.signOut),
+                ],
+              );
+            },
+          ),
         ),
       ],
     );

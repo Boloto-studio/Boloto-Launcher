@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,7 +9,14 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:lib_boloto_launcher/api/launcher_api.dart';
 import 'package:lib_boloto_launcher/app/settings.dart';
+import 'package:lib_boloto_launcher/game/downloader.dart';
+import 'package:lib_boloto_launcher/game/forge.dart' show LogCallback;
+import 'package:lib_boloto_launcher/game/game_service.dart';
+import 'package:lib_boloto_launcher/game/launch.dart';
+import 'package:lib_boloto_launcher/library/packs.dart';
 import 'package:lib_boloto_launcher/main.dart';
+import 'package:lib_boloto_launcher/minecraft/microsoft_auth.dart';
+import 'package:lib_boloto_launcher/minecraft/minecraft_account.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Steps through time without pumpAndSettle (the CRT effects loop forever).
@@ -128,18 +136,74 @@ MockClient fakeServer({bool emptyRack = false}) {
   });
 }
 
+/// Stands in for Mojang/Forge/git: reports progress, logs a few lines, and
+/// "runs" until stopped. Set [failWith] to make the install fail.
+class FakeGameService implements GameService {
+  String? failWith;
+  final launched = <String>[];
+  LaunchSession? lastSession;
+  Completer<int>? _exit;
+
+  @override
+  Future<bool> isInstalled(PackBuild build) async => false;
+
+  @override
+  Future<RunningGame> launch(
+    PackBuild build, {
+    required LaunchSession session,
+    required int memoryGb,
+    required void Function(InstallProgress) onProgress,
+    required LogCallback log,
+    CancelToken? cancel,
+  }) async {
+    launched.add(build.slug);
+    lastSession = session;
+    onProgress(const InstallProgress('ASSETS', .5));
+    log('[minecraft] assets');
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    if (failWith != null) throw GameException(failWith!);
+    log('[main/INFO]: Loading Minecraft 1.20.1 with Fabric… just kidding, Forge 47.3.0');
+    final exit = Completer<int>();
+    _exit = exit;
+    return RunningGame(exitCode: exit.future, stop: () => exit.complete(0));
+  }
+
+  void crash(int code) => _exit?.complete(code);
+}
+
+/// A signed-in Minecraft account, already in the store.
+MinecraftAccountController signedInMinecraft() => MinecraftAccountController(
+      auth: MicrosoftAuth(clientId: ''),
+      store: MemoryAccountStore(jsonEncode(MinecraftAccount(
+        uuid: '069a79f444e94726a5befca90e38aaf5',
+        name: 'Mavka_UA',
+        accessToken: 'mc-token',
+        expiresAt: DateTime(2999),
+        refreshToken: 'ms-refresh',
+      ).toJson())),
+    );
+
+late FakeGameService game;
+
 Future<void> boot(
   WidgetTester t, {
   Map<String, Object> prefs = const {},
   Size size = const Size(1360, 860),
   bool emptyRack = false,
+  MinecraftAccountController? minecraft,
 }) async {
   t.view.physicalSize = size;
   t.view.devicePixelRatio = 1;
   addTearDown(t.view.reset);
   SharedPreferences.setMockInitialValues(prefs);
   final api = LauncherApi(client: fakeServer(emptyRack: emptyRack), baseUrl: 'https://test.invalid');
-  await t.pumpWidget(BolotoApp(settings: await AppSettings.load(), api: api));
+  game = FakeGameService();
+  await t.pumpWidget(BolotoApp(
+    settings: await AppSettings.load(),
+    api: api,
+    game: game,
+    minecraft: minecraft ?? signedInMinecraft(),
+  ));
   await wait(t, 3500);
 }
 
@@ -156,14 +220,58 @@ void main() {
     expect(find.text('READY'), findsOneWidget);
 
     await t.tap(find.text('INSTALL & RUN'));
-    await wait(t, 4500);
+    await wait(t, 100);
+    expect(find.text('ASSETS 50%'), findsOneWidget); // install progress in the footer
+    await wait(t, 500);
     expect(find.text('GAME RUNNING'), findsOneWidget);
+    expect(find.text('> GAME RUNNING — LIVE LOG'), findsOneWidget);
+    expect(find.textContaining('Forge 47.3.0'), findsOneWidget); // game output streamed in
+    expect(game.launched, ['vatra']);
+    expect(game.lastSession!.username, 'Mavka_UA');
+    expect(find.text('EJECT'), findsOneWidget);
 
     await t.tap(find.text('STOP'));
-    await wait(t, 100);
+    await wait(t, 300);
+    expect(find.text('GAME CLOSED'), findsOneWidget);
     await t.tap(find.text('EJECT'));
     await wait(t, 1500);
     expect(find.text('NO MEDIA'), findsOneWidget);
+  });
+
+  testWidgets('a crash or failed install leaves the log up with the error', (t) async {
+    await boot(t);
+    await t.tap(find.text('VATRA').first);
+    await wait(t, 2500);
+    await t.tap(find.text('INSTALL & RUN'));
+    await wait(t, 600);
+    game.crash(1);
+    await wait(t, 300);
+    expect(find.text('GAME CRASHED (EXIT 1)'), findsOneWidget);
+    expect(find.text('> game exited (code 1)'), findsOneWidget);
+
+    game.failWith = 'Forge install step failed.';
+    await t.tap(find.text('RUN'));
+    await wait(t, 600);
+    expect(find.text('FAILED'), findsOneWidget);
+    expect(find.text('> ERROR: Forge install step failed.'), findsOneWidget);
+  });
+
+  testWidgets('Run asks for a Minecraft account first (offline profile in dev builds)', (t) async {
+    final mc = MinecraftAccountController(auth: MicrosoftAuth(clientId: ''), store: MemoryAccountStore());
+    await boot(t, minecraft: mc);
+    await t.tap(find.text('VATRA').first);
+    await wait(t, 2500);
+    await t.tap(find.text('INSTALL & RUN'));
+    await wait(t, 500);
+    expect(find.text('MINECRAFT'), findsWidgets); // dialog title
+    expect(find.textContaining('BOLOTO_MS_CLIENT_ID'), findsOneWidget); // no Azure app in tests
+
+    await t.enterText(find.byType(TextField), 'Mavka_UA');
+    await t.tap(find.text('PLAY OFFLINE'));
+    await wait(t, 800);
+    expect(game.launched, ['vatra']);
+    expect(game.lastSession!.userType, 'legacy');
+    expect(mc.account!.offline, isTrue);
   });
 
   testWidgets('an empty rack says so instead of showing a blank tape', (t) async {
@@ -301,6 +409,7 @@ void main() {
     await wait(t, 500);
     await t.tap(find.text('02 · LAUNCHER'));
     await wait(t, 1500);
+    expect(find.text('Mavka_UA'), findsOneWidget); // Minecraft account row
     await t.tap(find.text('03 · KEYS'));
     await wait(t, 1500);
     // Any RenderFlex overflow would have failed the test by now.

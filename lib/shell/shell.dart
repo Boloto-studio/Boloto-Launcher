@@ -6,6 +6,8 @@ import '../account/account_controller.dart';
 import '../account/account_dialog.dart';
 import '../api/launcher_api.dart';
 import '../app/settings.dart';
+import '../game/game_service.dart';
+import '../minecraft/minecraft_account.dart';
 import '../library/library_controller.dart';
 import '../library/library_screen.dart';
 import '../settings/settings_screen.dart';
@@ -34,8 +36,13 @@ const _logo = r''' ___  ___  _    ___ _____ ___
 
 /// App frame: header with nav, the active screen, footer, and the CRT overlay.
 class Shell extends StatefulWidget {
-  const Shell({super.key, required this.api});
+  const Shell({super.key, required this.api, required this.game, required this.minecraft});
   final LauncherApi api;
+  final GameService game;
+
+  /// Minecraft (Microsoft) account for launching; separate from the
+  /// boloto.studio account in the header.
+  final MinecraftAccountController minecraft;
 
   @override
   State<Shell> createState() => _ShellState();
@@ -43,7 +50,12 @@ class Shell extends StatefulWidget {
 
 class _ShellState extends State<Shell> {
   AppScreen _screen = AppScreen.library;
-  late final _library = LibraryController(api: widget.api);
+  late final _library = LibraryController(
+    api: widget.api,
+    game: widget.game,
+    minecraft: widget.minecraft,
+    memoryGb: () => SettingsScope.of(context).ramGb,
+  );
   late final _account = AccountController(api: widget.api, onSessionChanged: _library.refresh);
   late final Timer _introTimer;
 
@@ -51,6 +63,7 @@ class _ShellState extends State<Shell> {
   void initState() {
     super.initState();
     _library.refresh();
+    widget.minecraft.load();
     _account.addListener(_syncAccountName);
     _account.load();
     // Once the cold-start intro has played, later screens stagger in faster.
@@ -91,7 +104,7 @@ class _ShellState extends State<Shell> {
           title: 'OFF AIR',
           subtitle: 'UPLINK NOT YET ESTABLISHED ',
         ),
-      AppScreen.settings => SettingsScreen(library: _library),
+      AppScreen.settings => SettingsScreen(library: _library, minecraft: widget.minecraft),
     };
 
     return Material(
