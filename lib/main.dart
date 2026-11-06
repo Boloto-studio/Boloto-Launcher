@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'api/launcher_api.dart';
+import 'game/game_service.dart';
+import 'game/paths.dart';
+import 'minecraft/minecraft_account.dart';
 import 'app/settings.dart';
 import 'shell/shell.dart';
 import 'ui/palette.dart';
@@ -25,13 +28,26 @@ Future<void> main() async {
     },
   );
 
-  runApp(BolotoApp(settings: settings, api: LauncherApi()));
+  runApp(BolotoApp(
+    settings: settings,
+    api: LauncherApi(),
+    game: BolotoGameService(pathsFor: () => LauncherPaths.resolve(instancesOverride: settings.instancesDir)),
+    minecraft: MinecraftAccountController(),
+  ));
 }
 
 class BolotoApp extends StatelessWidget {
-  const BolotoApp({super.key, required this.settings, required this.api});
+  const BolotoApp({
+    super.key,
+    required this.settings,
+    required this.api,
+    required this.game,
+    required this.minecraft,
+  });
   final AppSettings settings;
   final LauncherApi api;
+  final GameService game;
+  final MinecraftAccountController minecraft;
 
   @override
   Widget build(BuildContext context) {
@@ -48,7 +64,7 @@ class BolotoApp extends StatelessWidget {
           highlightColor: Colors.transparent,
         ),
         builder: (context, child) => _PaletteHost(child: child!),
-        home: Shell(api: api),
+        home: Shell(api: api, game: game, minecraft: minecraft),
       ),
     );
   }

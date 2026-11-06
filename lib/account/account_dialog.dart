@@ -133,6 +133,12 @@ class _AccountDialogState extends State<_AccountDialog> {
   bool _busy = false;
   String? _error;
 
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.refresh(); // pick up a new avatar, friends, unlocks…
+  }
+
   Future<void> _signOut() async {
     setState(() {
       _busy = true;
@@ -140,7 +146,7 @@ class _AccountDialogState extends State<_AccountDialog> {
     });
     try {
       await widget.controller.signOut();
-      if (mounted) Navigator.of(context).pop();
+      _close();
     } on ApiException catch (e) {
       if (mounted) {
         setState(() {
@@ -151,31 +157,193 @@ class _AccountDialogState extends State<_AccountDialog> {
     }
   }
 
+  /// Closes this dialog once, even if sign-out and the controller both ask.
+  void _close() {
+    if (mounted && ModalRoute.of(context)?.isCurrent == true) Navigator.of(context).pop();
+  }
+
+  Future<void> _openProfile(Uri url) async {
+    var opened = false;
+    try {
+      opened = await launchUrl(url, mode: LaunchMode.externalApplication);
+    } on Exception {
+      opened = false;
+    }
+    if (!opened && mounted) setState(() => _error = 'Could not open $url');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) {
+        final account = widget.controller.account;
+        if (account == null) {
+          // Signed out (here or because the server dropped the session).
+          WidgetsBinding.instance.addPostFrameCallback((_) => _close());
+          return const SizedBox.shrink();
+        }
+        final pal = context.pal;
+        final profileUrl = account.profileUrl;
+        return TermDialog(
+          title: 'ACCOUNT',
+          width: 580,
+          actions: [
+            TermButton(label: 'Sign out', onTap: _busy ? null : _signOut),
+            TermButton(label: 'Close', onTap: _busy ? null : _close),
+            TermButton(
+              label: 'View full profile',
+              icon: TermIcon.globe,
+              semanticLabel: 'Open your frogs.net profile in the browser',
+              onTap: profileUrl == null ? null : () => _openProfile(profileUrl),
+            ),
+          ],
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _Avatar(account: account, size: 104),
+                const SizedBox(width: 20),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        account.displayName.toUpperCase(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: vt(42, height: .95, color: pal.ph, shadows: pal.glow),
+                      ),
+                      const SizedBox(height: 4),
+                      Text('@${account.username}', style: mono(12, ls: .06, color: pal.dim)),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          if (account.tier != null) TagChip(account.tier!.toUpperCase()),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Led(LedState.on),
+                              const SizedBox(width: 6),
+                              Text('SIGNED IN', style: mono(11, ls: .12, color: pal.ph)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (account.bio != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                account.bio!,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: mono(13, height: 1.55, color: pal.ph),
+              ),
+            ],
+            const SizedBox(height: 18),
+            CustomPaint(
+              foregroundPainter: DashedBorderPainter(color: pal.rule, right: false, bottom: false, left: false),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: Wrap(
+                  spacing: 18,
+                  runSpacing: 14,
+                  children: [
+                    _Stat('MINECRAFT', account.minecraftUsername ?? '[NOT LINKED]', dim: account.minecraftUsername == null),
+                    _Stat('LOCATION', account.location ?? '[UNKNOWN]', dim: account.location == null),
+                    _Stat('MEMBER SINCE', _monthYear(account.memberSince)),
+                    _Stat('FRIENDS', '${account.friendsCount}'),
+                    _Stat('UNLOCKED PACKS', '${account.unlockedCount}'),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            FormStatus(busy: _busy, busyText: '> SIGNING OUT…', error: _error),
+          ],
+        );
+      },
+    );
+  }
+}
+
+const _months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+String _monthYear(DateTime? d) => d == null ? '—' : '${_months[d.month - 1]} ${d.year}';
+
+class _Stat extends StatelessWidget {
+  const _Stat(this.label, this.value, {this.dim = false});
+  final String label;
+  final String value;
+  final bool dim;
+
   @override
   Widget build(BuildContext context) {
     final pal = context.pal;
-    final account = widget.controller.account!;
-    Widget row(String k, String v) => Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            children: [
-              SizedBox(width: 120, child: Text(k, style: mono(12, ls: .12, color: pal.dim))),
-              Expanded(child: Text(v, style: mono(13, ls: .04, color: pal.ph), overflow: TextOverflow.ellipsis)),
-            ],
+    return SizedBox(
+      width: 160,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: mono(10, ls: .14, color: pal.dim)),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: mono(13, ls: .04, color: dim ? pal.dim : pal.ph),
           ),
-        );
-    return TermDialog(
-      title: 'ACCOUNT',
-      actions: [
-        TermButton(label: 'Close', onTap: _busy ? null : () => Navigator.of(context).pop()),
-        TermButton(label: 'Sign out', onTap: _busy ? null : _signOut),
-      ],
-      children: [
-        row('SIGNED IN AS', account.username),
-        row('MINECRAFT', account.minecraftUsername ?? '[NOT LINKED]'),
-        const SizedBox(height: 4),
-        FormStatus(busy: _busy, busyText: '> SIGNING OUT…', error: _error),
-      ],
+        ],
+      ),
+    );
+  }
+}
+
+/// The frogs.net avatar, tinted to the phosphor like everything else on the
+/// tube. Falls back to the user's initials when there's no picture.
+class _Avatar extends StatelessWidget {
+  const _Avatar({required this.account, required this.size});
+  final Account account;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.pal;
+    final initials = account.displayName.trim().isEmpty ? '?' : account.displayName.trim()[0].toUpperCase();
+    final fallback = ColoredBox(
+      color: pal.a(.08),
+      child: Center(child: Text(initials, style: vt(size * .55, height: 1, color: pal.ph, shadows: pal.glow))),
+    );
+    return Container(
+      width: size,
+      height: size,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: kBg,
+        border: Border.all(color: pal.a(.6), width: 1.5),
+        boxShadow: [BoxShadow(color: pal.a(.22), blurRadius: 14)],
+      ),
+      child: ClipRect(
+        child: account.avatarUrl == null
+            ? fallback
+            : ColorFiltered(
+                colorFilter: ColorFilter.mode(pal.ph, BlendMode.color),
+                child: Image.network(
+                  account.avatarUrl!,
+                  fit: BoxFit.cover,
+                  filterQuality: FilterQuality.medium,
+                  errorBuilder: (_, _, _) => fallback,
+                  loadingBuilder: (context, child, progress) => progress == null ? child : fallback,
+                ),
+              ),
+      ),
     );
   }
 }

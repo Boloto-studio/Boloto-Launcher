@@ -18,19 +18,57 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// A boloto.studio website account signed in on this launcher.
+/// A boloto.studio website account signed in on this launcher, with a
+/// small slice of its frogs.net profile for the account panel.
 class Account {
-  const Account({required this.username, this.avatarUrl, this.minecraftUsername});
+  const Account({
+    required this.username,
+    String? displayName,
+    this.avatarUrl,
+    this.minecraftUsername,
+    this.bio,
+    this.tier,
+    this.location,
+    this.memberSince,
+    this.friendsCount = 0,
+    this.unlockedCount = 0,
+    this.profileUrl,
+  }) : displayName = displayName ?? username;
 
   final String username;
+  final String displayName;
   final String? avatarUrl;
   final String? minecraftUsername;
+  final String? bio;
+  final String? tier;
+  final String? location;
+  final DateTime? memberSince;
+  final int friendsCount;
+  final int unlockedCount;
+  final Uri? profileUrl;
 
-  factory Account.fromJson(Map<String, dynamic> json) => Account(
-        username: json['username'] as String,
-        avatarUrl: json['avatar'] as String?,
-        minecraftUsername: json['minecraft_username'] as String?,
-      );
+  // Older servers only send username/avatar/minecraft_username; the rest
+  // falls back to empty values.
+  factory Account.fromJson(Map<String, dynamic> json) {
+    String? text(String key) {
+      final v = json[key];
+      return v is String && v.trim().isNotEmpty ? v.trim() : null;
+    }
+
+    return Account(
+      username: json['username'] as String,
+      displayName: text('display_name'),
+      avatarUrl: text('avatar'),
+      minecraftUsername: text('minecraft_username'),
+      bio: text('bio'),
+      tier: text('tier'),
+      location: text('location'),
+      memberSince: DateTime.tryParse(text('member_since') ?? ''),
+      friendsCount: (json['friends_count'] as num?)?.toInt() ?? 0,
+      unlockedCount: (json['unlocked_count'] as num?)?.toInt() ?? 0,
+      profileUrl: text('profile_url') == null ? null : Uri.tryParse(text('profile_url')!),
+    );
+  }
 }
 
 class RedeemResult {

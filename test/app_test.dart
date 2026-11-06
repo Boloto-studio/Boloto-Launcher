@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,7 +9,14 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:lib_boloto_launcher/api/launcher_api.dart';
 import 'package:lib_boloto_launcher/app/settings.dart';
+import 'package:lib_boloto_launcher/game/downloader.dart';
+import 'package:lib_boloto_launcher/game/forge.dart' show LogCallback;
+import 'package:lib_boloto_launcher/game/game_service.dart';
+import 'package:lib_boloto_launcher/game/launch.dart';
+import 'package:lib_boloto_launcher/library/packs.dart';
 import 'package:lib_boloto_launcher/main.dart';
+import 'package:lib_boloto_launcher/minecraft/microsoft_auth.dart';
+import 'package:lib_boloto_launcher/minecraft/minecraft_account.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Steps through time without pumpAndSettle (the CRT effects loop forever).
@@ -66,7 +74,7 @@ final requests = <String>[];
 
 /// Stand-in for boloto.studio: Vatra's release is public, the key `DEV-KEY`
 /// unlocks its dev build, and `mavka` / `pisnya` is a website account.
-MockClient fakeServer() {
+MockClient fakeServer({bool emptyRack = false}) {
   var unlocked = false;
   var signedIn = false;
   requests.clear();
@@ -78,7 +86,19 @@ MockClient fakeServer() {
       ];
   return MockClient((req) async {
     requests.add('${req.method} ${req.url.path} ${req.headers['Authorization'] ?? '-'}');
-    final account = {'username': 'mavka', 'avatar': null, 'minecraft_username': null};
+    final account = {
+      'username': 'mavka',
+      'display_name': 'Lisova Mavka',
+      'avatar': null,
+      'minecraft_username': 'Mavka_UA',
+      'bio': 'Forest spirit. Do not follow the singing.',
+      'tier': 'Frog',
+      'location': null,
+      'member_since': '2026-09-14',
+      'friends_count': 3,
+      'unlocked_count': 1,
+      'profile_url': 'https://test.invalid/frogs/profile/42/',
+    };
     switch (req.url.path) {
       case '/api/launcher/auth/login/':
         final body = jsonDecode(req.body);
@@ -94,7 +114,7 @@ MockClient fakeServer() {
         return ok({'account': signedIn ? account : null});
       case '/api/launcher/modpacks/':
         return ok({
-          'modpacks': [vatra(builds())],
+          'modpacks': [if (!emptyRack) vatra(builds())],
         });
       case '/api/launcher/clients/':
         return ok({'token': 'tok', 'client_id': 1}, 201);
@@ -116,13 +136,74 @@ MockClient fakeServer() {
   });
 }
 
-Future<void> boot(WidgetTester t, [Map<String, Object> prefs = const {}, Size size = const Size(1360, 860)]) async {
+/// Stands in for Mojang/Forge/git: reports progress, logs a few lines, and
+/// "runs" until stopped. Set [failWith] to make the install fail.
+class FakeGameService implements GameService {
+  String? failWith;
+  final launched = <String>[];
+  LaunchSession? lastSession;
+  Completer<int>? _exit;
+
+  @override
+  Future<bool> isInstalled(PackBuild build) async => false;
+
+  @override
+  Future<RunningGame> launch(
+    PackBuild build, {
+    required LaunchSession session,
+    required int memoryGb,
+    required void Function(InstallProgress) onProgress,
+    required LogCallback log,
+    CancelToken? cancel,
+  }) async {
+    launched.add(build.slug);
+    lastSession = session;
+    onProgress(const InstallProgress('ASSETS', .5));
+    log('[minecraft] assets');
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    if (failWith != null) throw GameException(failWith!);
+    log('[main/INFO]: Loading Minecraft 1.20.1 with Fabric… just kidding, Forge 47.3.0');
+    final exit = Completer<int>();
+    _exit = exit;
+    return RunningGame(exitCode: exit.future, stop: () => exit.complete(0));
+  }
+
+  void crash(int code) => _exit?.complete(code);
+}
+
+/// A signed-in Minecraft account, already in the store.
+MinecraftAccountController signedInMinecraft() => MinecraftAccountController(
+      auth: MicrosoftAuth(clientId: ''),
+      store: MemoryAccountStore(jsonEncode(MinecraftAccount(
+        uuid: '069a79f444e94726a5befca90e38aaf5',
+        name: 'Mavka_UA',
+        accessToken: 'mc-token',
+        expiresAt: DateTime(2999),
+        refreshToken: 'ms-refresh',
+      ).toJson())),
+    );
+
+late FakeGameService game;
+
+Future<void> boot(
+  WidgetTester t, {
+  Map<String, Object> prefs = const {},
+  Size size = const Size(1360, 860),
+  bool emptyRack = false,
+  MinecraftAccountController? minecraft,
+}) async {
   t.view.physicalSize = size;
   t.view.devicePixelRatio = 1;
   addTearDown(t.view.reset);
   SharedPreferences.setMockInitialValues(prefs);
-  final api = LauncherApi(client: fakeServer(), baseUrl: 'https://test.invalid');
-  await t.pumpWidget(BolotoApp(settings: await AppSettings.load(), api: api));
+  final api = LauncherApi(client: fakeServer(emptyRack: emptyRack), baseUrl: 'https://test.invalid');
+  game = FakeGameService();
+  await t.pumpWidget(BolotoApp(
+    settings: await AppSettings.load(),
+    api: api,
+    game: game,
+    minecraft: minecraft ?? signedInMinecraft(),
+  ));
   await wait(t, 3500);
 }
 
@@ -139,38 +220,108 @@ void main() {
     expect(find.text('READY'), findsOneWidget);
 
     await t.tap(find.text('INSTALL & RUN'));
-    await wait(t, 4500);
+    await wait(t, 100);
+    expect(find.text('ASSETS 50%'), findsOneWidget); // install progress in the footer
+    await wait(t, 500);
     expect(find.text('GAME RUNNING'), findsOneWidget);
+    expect(find.text('> GAME RUNNING — LIVE LOG'), findsOneWidget);
+    expect(find.textContaining('Forge 47.3.0'), findsOneWidget); // game output streamed in
+    expect(game.launched, ['vatra']);
+    expect(game.lastSession!.username, 'Mavka_UA');
+    expect(find.text('EJECT'), findsOneWidget);
 
     await t.tap(find.text('STOP'));
-    await wait(t, 100);
+    await wait(t, 300);
+    expect(find.text('GAME CLOSED'), findsOneWidget);
     await t.tap(find.text('EJECT'));
     await wait(t, 1500);
     expect(find.text('NO MEDIA'), findsOneWidget);
   });
 
-  testWidgets('redeeming a key adds the dev build and loads it', (t) async {
+  testWidgets('a crash or failed install leaves the log up with the error', (t) async {
     await boot(t);
-    expect(find.text('NO MEDIA'), findsOneWidget);
+    await t.tap(find.text('VATRA').first);
+    await wait(t, 2500);
+    await t.tap(find.text('INSTALL & RUN'));
+    await wait(t, 600);
+    game.crash(1);
+    await wait(t, 300);
+    expect(find.text('GAME CRASHED (EXIT 1)'), findsOneWidget);
+    expect(find.text('> game exited (code 1)'), findsOneWidget);
 
-    await t.tap(find.text('REDEEM KEY'));
+    game.failWith = 'Forge install step failed.';
+    await t.tap(find.text('RUN'));
+    await wait(t, 600);
+    expect(find.text('FAILED'), findsOneWidget);
+    expect(find.text('> ERROR: Forge install step failed.'), findsOneWidget);
+  });
+
+  testWidgets('Run asks for a Minecraft account first (offline profile in dev builds)', (t) async {
+    final mc = MinecraftAccountController(auth: MicrosoftAuth(clientId: ''), store: MemoryAccountStore());
+    await boot(t, minecraft: mc);
+    await t.tap(find.text('VATRA').first);
+    await wait(t, 2500);
+    await t.tap(find.text('INSTALL & RUN'));
     await wait(t, 500);
+    expect(find.text('MINECRAFT'), findsWidgets); // dialog title
+    expect(find.textContaining('BOLOTO_MS_CLIENT_ID'), findsOneWidget); // no Azure app in tests
+
+    await t.enterText(find.byType(TextField), 'Mavka_UA');
+    await t.tap(find.text('PLAY OFFLINE'));
+    await wait(t, 800);
+    expect(game.launched, ['vatra']);
+    expect(game.lastSession!.userType, 'legacy');
+    expect(mc.account!.offline, isTrue);
+  });
+
+  testWidgets('an empty rack says so instead of showing a blank tape', (t) async {
+    await boot(t, emptyRack: true);
+    expect(find.text('RACK EMPTY'), findsOneWidget);
+    expect(find.text('BLANK'), findsNothing);
+    expect(find.text('0 ON RACK'), findsOneWidget);
+  });
+
+  testWidgets('redeeming a key in Settings › Keys adds the dev build and loads it', (t) async {
+    await boot(t);
+    expect(find.text('BLANK'), findsNothing);
+    expect(find.text('REDEEM KEY'), findsNothing); // no longer on the rack
+
+    await t.tap(find.text('SETTINGS'));
+    await wait(t, 2000);
+    await t.tap(find.text('03 · KEYS'));
+    await wait(t, 1500);
+    expect(find.text('[NONE YET]'), findsOneWidget);
+
     await t.enterText(find.byType(TextField), 'nope');
-    await t.tap(find.text('REDEEM').last);
+    await t.tap(find.text('REDEEM'));
     await wait(t, 300);
     expect(find.text('> THAT KEY IS NOT VALID.'), findsOneWidget);
 
     await t.enterText(find.byType(TextField), 'DEV-KEY');
-    await t.tap(find.text('REDEEM').last);
-    await wait(t, 2800);
+    await t.tap(find.text('REDEEM'));
+    await wait(t, 300);
+    expect(find.text("> VATRA / DEV UNLOCKED. IT'S IN THE DECK ON THE LIBRARY TAB."), findsOneWidget);
+    expect(find.text('01  VATRA / DEV'), findsOneWidget);
+    expect((await SharedPreferences.getInstance()).getString('launcher.token'), 'tok');
 
-    // Dialog closed, Vatra loaded with the dev build picked.
-    expect(find.byType(TextField), findsNothing);
+    await wait(t, 2500);
+    await t.tap(find.text('LIBRARY'));
+    await wait(t, 1500);
     expect(find.text('READY'), findsOneWidget);
     expect(find.text('DEV'), findsOneWidget);
+  });
 
-    final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getString('launcher.token'), 'tok');
+  testWidgets('rescan lives in Settings › Keys and reloads the rack', (t) async {
+    await boot(t);
+    final before = requests.where((r) => r.startsWith('GET /api/launcher/modpacks/')).length;
+    await t.tap(find.text('SETTINGS'));
+    await wait(t, 2000);
+    await t.tap(find.text('03 · KEYS'));
+    await wait(t, 1500);
+    await t.tap(find.text('RESCAN'));
+    await wait(t, 300);
+    expect(requests.where((r) => r.startsWith('GET /api/launcher/modpacks/')).length, before + 1);
+    expect(find.text('> 1 ON RACK'), findsOneWidget);
   });
 
   testWidgets('signing in and out from the header', (t) async {
@@ -197,7 +348,17 @@ void main() {
 
     await t.tap(find.text('MAVKA'));
     await wait(t, 500);
-    expect(find.text('SIGNED IN AS'), findsOneWidget);
+    // Mini profile: name, handle, tier, bio, stats and a link to the full profile.
+    expect(find.text('LISOVA MAVKA'), findsOneWidget);
+    expect(find.text('@mavka'), findsOneWidget);
+    expect(find.text('FROG'), findsOneWidget);
+    expect(find.text('Forest spirit. Do not follow the singing.'), findsOneWidget);
+    expect(find.text('Mavka_UA'), findsOneWidget);
+    expect(find.text('[UNKNOWN]'), findsOneWidget); // no location set
+    expect(find.text('SEP 2026'), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
+    expect(find.text('VIEW FULL PROFILE'), findsOneWidget);
+    expect(find.text('L'), findsOneWidget); // initials stand in for the missing avatar
     await t.tap(find.text('SIGN OUT'));
     await wait(t, 500);
     expect(find.text('SIGN IN'), findsOneWidget);
@@ -229,7 +390,7 @@ void main() {
 
     // Fresh app from the same prefs comes back with them.
     await t.pumpWidget(const SizedBox());
-    await boot(t, saved);
+    await boot(t, prefs: saved);
     final s = await AppSettings.load();
     expect(s.phosphor, Phosphor.amber);
     expect(s.crt, isFalse);
@@ -237,7 +398,7 @@ void main() {
   });
 
   testWidgets('every screen fits the minimum window size', (t) async {
-    await boot(t, const {'ui.media': 'floppy'}, const Size(1200, 780));
+    await boot(t, prefs: const {'ui.media': 'floppy'}, size: const Size(1200, 780));
     await t.tap(find.text('VATRA').first);
     await wait(t, 2500);
     for (final tab in ['SERVERS', 'FROGS.NET', 'SETTINGS', 'LIBRARY']) {
@@ -247,6 +408,9 @@ void main() {
     await t.tap(find.text('SETTINGS'));
     await wait(t, 500);
     await t.tap(find.text('02 · LAUNCHER'));
+    await wait(t, 1500);
+    expect(find.text('Mavka_UA'), findsOneWidget); // Minecraft account row
+    await t.tap(find.text('03 · KEYS'));
     await wait(t, 1500);
     // Any RenderFlex overflow would have failed the test by now.
   });

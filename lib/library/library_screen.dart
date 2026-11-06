@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../api/launcher_api.dart';
 import '../app/settings.dart';
+import '../minecraft/minecraft_sign_in_dialog.dart';
 import '../ui/crt.dart';
-import '../ui/dialog.dart';
 import '../ui/icons.dart';
 import '../ui/layout.dart';
 import '../ui/media.dart';
@@ -38,41 +37,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
               dir: 'DIR: /usr/local/boloto/library',
               note: 'Tapes are pulled from the Boloto CDN, so mods that live nowhere else ship with the pack.',
               children: [
-                for (final (i, p) in [...c.packs, blankPack].indexed)
-                  _TapeTile(pack: p, index: i, controller: c, media: media),
-                if (c.rackState == RackState.loading && c.packs.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Text('> FETCHING RACK FROM boloto.studio…', style: mono(11, color: context.pal.dim)),
-                  ),
-                if (c.rackState == RackState.error)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Text('> RACK OFFLINE: ${c.rackError}', style: mono(11, color: context.pal.dim)),
-                  ),
-                Reveal.fade(
-                  d: 1.6,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TermButton(
-                          label: 'Redeem key',
-                          icon: TermIcon.user,
-                          fontSize: 11,
-                          onTap: () => showRedeemDialog(context, c),
-                          semanticLabel: 'Redeem a game key',
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      TermButton(
-                        label: 'Rescan',
-                        fontSize: 11,
-                        onTap: c.rackState == RackState.loading ? null : c.refresh,
-                        semanticLabel: 'Reload the rack',
-                      ),
-                    ],
-                  ),
-                ),
+                for (final (i, p) in c.packs.indexed) _TapeTile(pack: p, index: i, controller: c, media: media),
+                if (c.packs.isEmpty) _RackMessage(controller: c),
               ],
             ),
             Expanded(
@@ -124,7 +90,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
         DeckPhase.loading => _Console(lines: c.bootLines, size: 24, stepMs: 7),
         DeckPhase.ready => _Ready(pack: c.pack!, selected: c.build),
         DeckPhase.installing => _Installing(controller: c),
-        DeckPhase.running => _Console(lines: c.runLines, size: 22, stepMs: 9),
+        DeckPhase.running || DeckPhase.stopped => _LogView(
+            lines: c.log,
+            header: c.phase == DeckPhase.running ? '> GAME RUNNING — LIVE LOG' : '> ${c.statusLine}',
+          ),
       };
 }
 
@@ -339,17 +308,107 @@ class _Installing extends StatelessWidget {
     final n = (controller.progress / 100 * 32).round();
     final bar = '#' * n + '.' * (32 - n);
     return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('> SPOOLING ${controller.pack!.title} TO DISK', style: vt(26)),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         Text('[$bar] ${controller.progress}%', style: vt(26), softWrap: false),
-        const SizedBox(height: 12),
-        Text(controller.installFile, style: vt(20, color: context.pal.dim)),
+        const SizedBox(height: 6),
+        Text('  ↳ ${controller.stage}', style: vt(20, color: context.pal.dim)),
+        const SizedBox(height: 14),
+        Expanded(child: _LogView(lines: controller.log, fontSize: 11)),
       ],
     );
   }
+}
+
+/// Scrolling log (install output + the game's stdout/stderr). Sticks to the
+/// bottom while new lines arrive unless you've scrolled up to read.
+class _LogView extends StatefulWidget {
+  const _LogView({required this.lines, this.header, this.fontSize = 12});
+  final List<String> lines;
+  final String? header;
+  final double fontSize;
+
+  @override
+  State<_LogView> createState() => _LogViewState();
+}
+
+class _LogViewState extends State<_LogView> {
+  final _scroll = ScrollController();
+  bool _follow = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(() {
+      if (!_scroll.hasClients) return;
+      _follow = _scroll.position.pixels >= _scroll.position.maxScrollExtent - 24;
+    });
+  }
+
+  @override
+  void didUpdateWidget(_LogView old) {
+    super.didUpdateWidget(old);
+    if (_follow) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  Color _colorFor(String line, Palette pal) {
+    final l = line.toUpperCase();
+    if (l.contains('ERROR') || l.contains('EXCEPTION') || l.contains('FATAL')) return kAmber;
+    if (line.startsWith('>') || line.startsWith('[launcher]')) return pal.ph;
+    return pal.dim;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.pal;
+    final lines = widget.lines;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.header != null) ...[
+          Text(widget.header!, style: vt(22)),
+          const SizedBox(height: 10),
+        ],
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(border: Border.all(color: pal.rule)),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: SelectionArea(
+              child: ListView.builder(
+                controller: _scroll,
+                itemCount: lines.length,
+                itemBuilder: (context, i) => Text(
+                  lines[i],
+                  style: mono(widget.fontSize, height: 1.35, color: _colorFor(lines[i], pal)),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Run needs a Minecraft account; ask for one first if nobody's signed in.
+Future<void> _onRun(BuildContext context, LibraryController c) async {
+  if (c.runStarts && !c.minecraft.signedIn) {
+    final ok = await showMinecraftSignInDialog(context, c.minecraft);
+    if (!ok) return;
+  }
+  await c.run();
 }
 
 /// `DECK A // TAPE TRANSPORT` — slot, LEDs and transport controls.
@@ -447,7 +506,7 @@ class _Deck extends StatelessWidget {
               RunGlyph.stop => TermIcon.stop,
               RunGlyph.none => null,
             },
-            onTap: c.canRun ? c.run : null,
+            onTap: c.canRun ? () => _onRun(context, c) : null,
           ),
         ],
       ),
@@ -500,72 +559,35 @@ class _BuildPicker extends StatelessWidget {
   }
 }
 
-/// Asks for a game key and redeems it. The unlocked pack lands in the deck.
-Future<void> showRedeemDialog(BuildContext context, LibraryController controller) =>
-    showTermDialog<void>(context, _RedeemDialog(controller: controller));
-
-class _RedeemDialog extends StatefulWidget {
-  const _RedeemDialog({required this.controller});
+/// What the rack shows instead of tapes: fetching, offline, or empty.
+class _RackMessage extends StatelessWidget {
+  const _RackMessage({required this.controller});
   final LibraryController controller;
 
   @override
-  State<_RedeemDialog> createState() => _RedeemDialogState();
-}
-
-class _RedeemDialogState extends State<_RedeemDialog> {
-  final _code = TextEditingController();
-  bool _busy = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _code.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (_busy) return;
-    if (_code.text.trim().isEmpty) {
-      setState(() => _error = 'Enter a key.');
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      await widget.controller.redeem(_code.text);
-      if (mounted) Navigator.of(context).pop();
-    } on ApiException catch (e) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = e.message;
-        });
-      }
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return TermDialog(
-      title: 'REDEEM KEY',
-      blurb: 'A key unlocks a pack, or a dev build of one. Sign in first to keep it on your account.',
-      actions: [
-        TermButton(label: 'Cancel', onTap: _busy ? null : () => Navigator.of(context).pop()),
-        TermButton(label: 'Redeem', icon: TermIcon.play, onTap: _busy ? null : _submit),
-      ],
-      children: [
-        TermField(
-          controller: _code,
-          autofocus: true,
-          enabled: !_busy,
-          hint: 'XXXXX-XXXXX-XXXXX-XXXXX',
-          onSubmitted: (_) => _submit(),
+    final pal = context.pal;
+    final (title, body) = switch (controller.rackState) {
+      RackState.loading => ('SCANNING…', 'Fetching tapes from boloto.studio.'),
+      RackState.error => ('NO SIGNAL', '${controller.rackError} Rescan from Settings › Keys.'),
+      RackState.ready => ('RACK EMPTY', 'No tapes on the rack yet. Stay tuned, new modpacks are on the way.'),
+    };
+    return Reveal.fade(
+      d: 1.2,
+      child: CustomPaint(
+        foregroundPainter: DashedBorderPainter(color: pal.rule),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 22),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: vt(30, height: 1)),
+              const SizedBox(height: 8),
+              Text(body, style: mono(12, height: 1.55, color: pal.dim)),
+            ],
+          ),
         ),
-        const SizedBox(height: 10),
-        FormStatus(busy: _busy, busyText: '> CONTACTING boloto.studio…', error: _error),
-      ],
+      ),
     );
   }
 }

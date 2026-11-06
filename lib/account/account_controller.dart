@@ -34,6 +34,22 @@ class AccountController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Re-fetches the profile (e.g. when the account panel opens) so counts
+  /// and avatar are current. Keeps what we have if the site is unreachable.
+  Future<void> refresh() async {
+    if (_account == null) return;
+    try {
+      final account = await api.fetchAccount();
+      if (_disposed) return;
+      final changedSession = (account == null) != (_account == null);
+      _account = account;
+      notifyListeners();
+      if (changedSession) onSessionChanged?.call();
+    } on ApiException {
+      // offline: keep showing the last known profile
+    }
+  }
+
   /// Throws [ApiException] (e.g. `invalid_credentials`) on failure.
   Future<void> signIn(String username, String password) async {
     final account = await api.signIn(username, password);

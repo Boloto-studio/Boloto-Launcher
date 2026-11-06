@@ -165,4 +165,32 @@ void main() {
     );
     expect(api.registerUrl.toString(), 'https://boloto.studio/frogs/register/');
   });
+
+  test('account parses the mini profile and tolerates older servers', () {
+    final full = Account.fromJson({
+      'username': 'mavka',
+      'display_name': 'Lisova Mavka',
+      'avatar': 'https://cdn.invalid/a.png',
+      'minecraft_username': 'Mavka_UA',
+      'bio': '  Forest spirit.  ',
+      'tier': 'Frog',
+      'location': '',
+      'member_since': '2026-09-14',
+      'friends_count': 3,
+      'unlocked_count': 1,
+      'profile_url': 'https://boloto.studio/frogs/profile/42/',
+    });
+    expect(full.displayName, 'Lisova Mavka');
+    expect(full.bio, 'Forest spirit.');
+    expect(full.location, isNull); // blank → null
+    expect(full.memberSince, DateTime(2026, 9, 14));
+    expect(full.friendsCount, 3);
+    expect(full.profileUrl.toString(), 'https://boloto.studio/frogs/profile/42/');
+
+    final old = Account.fromJson({'username': 'mavka', 'avatar': null, 'minecraft_username': null});
+    expect(old.displayName, 'mavka');
+    expect(old.profileUrl, isNull);
+    expect(old.memberSince, isNull);
+    expect(old.unlockedCount, 0);
+  });
 }
